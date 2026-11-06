@@ -22,7 +22,7 @@ ADMIN_USERNAME = "moscow_1488"
 
 # Цены за пакеты. Убрали "stock", теперь 15-ка доступна всегда.
 PACKAGES = {
-    15: {"price": 30, "available": True},
+    15: {"price": 35, "available": True},
     25: {"price": 50, "available": False},
     50: {"price": 100, "available": False},
 }

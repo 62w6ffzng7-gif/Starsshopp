@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Звёзды за рубли (коды), Юзернеймы за баланс (звёзды), профиль, баланс*
+# *Звёзды за рубли (коды), Юзернеймы за баланс, Пополнение через XTR*
 # *зависимости: aiogram, aiosqlite, flask*
 
 import asyncio
@@ -12,7 +12,8 @@ import threading
 from flask import Flask
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, 
+                           LabeledPrice, PreCheckoutQuery, Message)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -78,8 +79,8 @@ def generate_code():
 async def cmd_start(message: types.Message):
     await get_user(message.from_user.id)
     kb = InlineKeyboardBuilder()
-    kb.button(text="🌟 Купить звёзды (за рубли)", callback_data="menu_buy")
-    kb.button(text="👑 Купить юзернейм (за баланс)", callback_data="menu_usernames")
+    kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
+    kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
     kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
@@ -87,7 +88,7 @@ async def cmd_start(message: types.Message):
     
     caption = (
         "👋 <b>Добро пожаловать в StarShop!</b> 🌟\n\n"
-        "💎 Здесь ты можешь купить звёзды за рубли или крутые юзернеймы за звёзды.\n"
+        "💎 Здесь ты можешь купить звёзды за рубли или крутые юзернеймы за баланс.\n"
         "🚀 Быстро, выгодно и безопасно!\n\n"
         "👇 Выбирай раздел:"
     )
@@ -101,7 +102,7 @@ async def cmd_start(message: types.Message):
     except Exception:
         pass
 
-# --- Покупка звезд (ЗА РУБЛИ) ---
+# --- Покупка звезд (ЗА РУБЛИ, С КОДОМ) ---
 @dp.callback_query(F.data == "menu_buy")
 async def buy_stars_menu(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
@@ -110,7 +111,7 @@ async def buy_stars_menu(call: CallbackQuery):
     kb.button(text="❌ 50 звёзд (Скоро будет)", callback_data="out_of_stock")
     kb.button(text="🔙 Назад", callback_data="back_to_start")
     kb.adjust(1)
-    await call.message.edit_caption(caption="🛒 <b>Выбери пакет звёзд за рубли:</b>\n\n<i>Оплата в рублях!</i>", reply_markup=kb.as_markup(), parse_mode="HTML")
+    await call.message.edit_caption(caption="🛒 <b>Выбери пакет звёзд:</b>", reply_markup=kb.as_markup(), parse_mode="HTML")
     await call.answer()
 
 @dp.callback_query(F.data == "out_of_stock")
@@ -120,14 +121,13 @@ async def out_of_stock(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("select_stars_"))
 async def confirm_stars(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
-    price = 30 # Цена в рублях
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, покупаю", callback_data=f"confirm_stars_{amount}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_buy")]
     ])
     await call.message.edit_caption(
-        caption=f"🤔 <b>Вы уверены, что хотите купить {amount} звёзд за {price}₽?</b>",
+        caption=f"🤔 <b>Вы уверены, что хотите купить {amount} звёзд за 30₽?</b>",
         reply_markup=kb, parse_mode="HTML"
     )
     await call.answer()
@@ -138,7 +138,7 @@ async def process_stars_order(call: CallbackQuery):
     user_id = call.from_user.id
     username = call.from_user.username or "нет_юзернейма"
     code = generate_code()
-    item_name = f"{amount} звёзд (за рубли)"
+    item_name = f"{amount} звёзд"
     
     async with aiosqlite.connect("shop.db") as db:
         cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, item_name, code, "pending"))
@@ -150,7 +150,7 @@ async def process_stars_order(call: CallbackQuery):
                 f"📦 Товар: {amount} звёзд\n"
                 f"💰 Сумма: 30₽\n"
                 f"🔑 <b>Секретный код: <code>{code}</code></b>\n\n"
-                f"👇 Напиши нашему менеджеру, сообщи код и переведи 30 рублей:\n"
+                f"👇 Напиши нашему менеджеру и отправь этот код:\n"
                 f"<b>@{ADMIN_USERNAME}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👨‍💻 Написать менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]
@@ -186,7 +186,7 @@ async def confirm_uname(call: CallbackQuery):
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_usernames")]
     ])
     await call.message.edit_caption(
-        caption=f"🤔 <b>Вы уверены, что хотите купить юзернейм {uname} за {price} ⭐ (с баланса)?</b>",
+        caption=f"🤔 <b>Вы уверены, что хотите купить юзернейм {uname} за {price} ⭐?</b>",
         reply_markup=kb, parse_mode="HTML"
     )
     await call.answer()
@@ -207,7 +207,6 @@ async def process_uname_order(call: CallbackQuery):
             parse_mode="HTML"
         )
 
-    # Списываем баланс
     await add_balance(user_id, -price)
     await add_history(user_id, f"Юзернейм {uname}", price)
     
@@ -220,7 +219,7 @@ async def process_uname_order(call: CallbackQuery):
         caption=f"🎉 <b>Заказ #{order_id} создан!</b>\n\n"
                 f"📦 Товар: Юзернейм {uname}\n"
                 f"🔑 <b>Секретный код: <code>{code}</code></b>\n\n"
-                f"👇 Напиши нашему менеджеру и отправь ему этот код, чтобы забрать ник:\n"
+                f"👇 Напиши нашему менеджеру и отправь этот код, чтобы забрать ник:\n"
                 f"<b>@{ADMIN_USERNAME}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👨‍💻 Написать менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]
@@ -275,7 +274,7 @@ async def admin_reject(call: CallbackQuery):
     await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
     await call.answer("Отклонено.")
 
-# --- Профиль и Баланс ---
+# --- Профиль и Пополнение (ЧЕРЕЗ XTR) ---
 @dp.callback_query(F.data == "menu_profile")
 async def show_profile(call: CallbackQuery):
     balance = await get_user(call.from_user.id)
@@ -286,7 +285,7 @@ async def show_profile(call: CallbackQuery):
             history_text = "\n".join([f"• {item} — {price} ⭐" for item, price in rows]) if rows else "Покупок пока нет."
             
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Пополнить баланс (за рубли)", callback_data="topup_start")], 
+        [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="topup_start")], 
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]
     ])
     await call.message.edit_caption(
@@ -319,25 +318,43 @@ async def process_topup_amount(message: types.Message, state: FSMContext):
         return await message.answer("❌ Минимальное пополнение — 15 звёзд.")
     await state.clear()
     
-    code = generate_code()
-    async with aiosqlite.connect("shop.db") as db:
-        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (message.from_user.id, message.from_user.username, f"Пополнение на {amount} ⭐", code, "pending"))
-        order_id = cursor.lastrowid
-        await db.commit()
-
     await message.answer(
-        f"🧾 <b>Заявка на пополнение #{order_id}</b>\n\n"
-        f"Вы хотите пополнить баланс на {amount} звёзд.\n"
-        f"🔑 <b>Секретный код: <code>{code}</code></b>\n\n"
-        f"👇 Напиши нашему менеджеру и отправь этот код, чтобы оплатить рубли и получить звёзды на баланс:\n"
-        f"<b>@{ADMIN_USERNAME}</b>",
+        f"🤔 <b>Вы точно хотите пополнить баланс на {amount} ⭐?</b>\n\n"
+        f"Нажми кнопку ниже, чтобы оплатить через официальный инвойс Telegram.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👨‍💻 Написать менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]
+            [InlineKeyboardButton(text=f"⭐ Оплатить {amount} ⭐", callback_data=f"invoice_topup_{amount}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_profile")]
         ]), parse_mode="HTML"
     )
+
+@dp.callback_query(F.data.startswith("invoice_topup_"))
+async def send_topup_invoice(call: CallbackQuery):
+    amount = int(call.data.split("_")[2])
+    await bot.send_invoice(
+        chat_id=call.from_user.id,
+        title=f"Пополнение на {amount} ⭐",
+        description="Пополнение внутреннего баланса.",
+        payload=f"topup_{amount}",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label="Пополнение", amount=amount)],
+    )
+    await call.answer()
+
+@dp.pre_checkout_query()
+async def process_pre_checkout(pre_checkout_q: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
+
+@dp.message(F.successful_payment)
+async def process_successful_payment(message: Message):
+    payload = message.successful_payment.invoice_payload
+    amount = message.successful_payment.total_amount
     
-    if ADMIN_ID != 0:
-        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАЯВКА НА ПОПОЛНЕНИЕ #{order_id}</b>\nКлиент: @{message.from_user.username}\nСумма: {amount} ⭐\nКод: <code>{code}</code>", parse_mode="HTML")
+    if payload.startswith("topup_"):
+        topup = int(payload.split("_")[1])
+        await add_balance(message.from_user.id, topup)
+        await add_history(message.from_user.id, "Пополнение баланса", amount)
+        await message.answer(f"✅ <b>Баланс пополнен на {topup} ⭐!</b>\nТеперь можешь купить юзернейм.", parse_mode="HTML")
 
 # --- Помощь и Навигация ---
 @dp.callback_query(F.data == "menu_help")
@@ -345,7 +362,7 @@ async def show_help(call: CallbackQuery):
     text = (
         "📖 <b>Как это работает?</b>\n\n"
         "🌟 <b>Покупка звёзд:</b> Выбираешь пакет (15 звёзд = 30₽). Бот дает код. Пишешь менеджеру, переводишь рубли, получаешь звёзды.\n\n"
-        "👑 <b>Покупка юзернеймов:</b> Нужны звёзды на балансе. Если их нет, сначала пополняешь баланс за рубли. Потом покупаешь ник за звёзды и получаешь код для менеджера.\n\n"
+        "👑 <b>Покупка юзернеймов:</b> Нужны звёзды на балансе. Если их нет, сначала пополняешь баланс (в профиле). Потом покупаешь ник за звёзды и получаешь код для менеджера.\n\n"
         f"💬 <b>Менеджер:</b> @{ADMIN_USERNAME}"
     )
     await call.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Админ", url=f"https://t.me/{ADMIN_USERNAME}")], [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]]), parse_mode="HTML")
@@ -354,8 +371,8 @@ async def show_help(call: CallbackQuery):
 @dp.callback_query(F.data == "back_to_start")
 async def back_to_start(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
-    kb.button(text="🌟 Купить звёзды (за рубли)", callback_data="menu_buy")
-    kb.button(text="👑 Купить юзернейм (за баланс)", callback_data="menu_usernames")
+    kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
+    kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
     kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")

@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Звёзды за рубли, Юзернеймы за баланс, Пополнение XTR (25-1000), Отзывы*
+# *Звёзды за рубли, Юзернеймы за баланс, Пополнение XTR (50-1000), Отзывы*
 # *зависимости: aiogram, aiosqlite, flask*
 
 import asyncio
@@ -24,7 +24,6 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ADMIN_USERNAME = "moscow_1488"
 IMAGE_URL = "https://github.com/62w6ffzng7-gif/Starsshopp/raw/main/IMG_1577.jpeg"
 
-# База юзернеймов (название: цена в звездах)
 USERNAMES_DB = {
     "@ynqnw5": 25,
 }
@@ -300,11 +299,18 @@ async def topup_start(call: CallbackQuery, state: FSMContext):
     await call.message.edit_caption(
         caption="💳 <b>Пополнение баланса</b>\n\n"
                 "Сколько звёзд вы хотите купить на баланс?\n"
-                "Напишите в чат цифру от 25 до 1000 (например: <code>50</code>):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="menu_profile")]]), parse_mode="HTML"
+                "Напишите в чат цифру от 50 до 1000 (например: <code>50</code>):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_topup")]]), parse_mode="HTML"
     )
     await state.set_state(UserStates.waiting_for_topup_amount)
     await call.answer()
+
+# ИСПРАВЛЕННАЯ ОТМЕНА ПОПОЛНЕНИЯ
+@dp.callback_query(F.data == "cancel_topup")
+async def cancel_topup(call: CallbackQuery, state: FSMContext):
+    await state.clear() # Сбрасываем ожидание ввода
+    await call.message.edit_caption(caption="👋 <b>Главное меню</b>\n\n👇 Выбирай нужный раздел:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👤 Профиль", callback_data="menu_profile")]]), parse_mode="HTML")
+    await call.answer("Действие отменено")
 
 @dp.message(UserStates.waiting_for_topup_amount)
 async def process_topup_amount(message: types.Message, state: FSMContext):
@@ -312,8 +318,8 @@ async def process_topup_amount(message: types.Message, state: FSMContext):
         return await message.answer("❌ Пожалуйста, введи число (цифрами).")
     amount = int(message.text)
     
-    if amount < 25 or amount > 1000:
-        return await message.answer("❌ Минимальное пополнение — 25 звёзд, максимальное — 1000. Введи другое число.")
+    if amount < 50 or amount > 1000:
+        return await message.answer("❌ Минимальное пополнение через Telegram — 50 звёзд, максимальное — 1000. Введи другое число.")
     
     await state.clear()
     
@@ -381,7 +387,6 @@ async def process_review(message: types.Message, state: FSMContext):
 @dp.message(F.text & ~F.text.startswith("/"))
 async def catch_reviews(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
-    # Если пользователь не в процессе пополнения, а просто пишет текст — считаем это отзывом
     if current_state is None:
         await state.set_state(UserStates.waiting_for_review)
         await process_review(message, state)
@@ -399,7 +404,8 @@ async def show_help(call: CallbackQuery):
     await call.answer()
 
 @dp.callback_query(F.data == "back_to_start")
-async def back_to_start(call: CallbackQuery):
+async def back_to_start(call: CallbackQuery, state: FSMContext):
+    await state.clear() # Сбрасываем состояния на всякий случай
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")

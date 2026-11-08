@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Звёзды за рубли (коды), Юзернеймы за баланс, Пополнение через XTR*
+# *Звёзды за рубли, Юзернеймы за баланс, Пополнение XTR (25-1000), Отзывы*
 # *зависимости: aiogram, aiosqlite, flask*
 
 import asyncio
@@ -36,6 +36,7 @@ dp = Dispatcher()
 
 class UserStates(StatesGroup):
     waiting_for_topup_amount = State()
+    waiting_for_review = State()
 
 app = Flask(__name__)
 @app.route('/')
@@ -102,7 +103,7 @@ async def cmd_start(message: types.Message):
     except Exception:
         pass
 
-# --- Покупка звезд (ЗА РУБЛИ, С КОДОМ) ---
+# --- Покупка звезд (ЗА РУБЛИ) ---
 @dp.callback_query(F.data == "menu_buy")
 async def buy_stars_menu(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
@@ -121,15 +122,11 @@ async def out_of_stock(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("select_stars_"))
 async def confirm_stars(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, покупаю", callback_data=f"confirm_stars_{amount}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_buy")]
     ])
-    await call.message.edit_caption(
-        caption=f"🤔 <b>Вы уверены, что хотите купить {amount} звёзд за 30₽?</b>",
-        reply_markup=kb, parse_mode="HTML"
-    )
+    await call.message.edit_caption(caption=f"🤔 <b>Вы уверены, что хотите купить {amount} звёзд за 30₽?</b>", reply_markup=kb, parse_mode="HTML")
     await call.answer()
 
 @dp.callback_query(F.data.startswith("confirm_stars_"))
@@ -138,10 +135,9 @@ async def process_stars_order(call: CallbackQuery):
     user_id = call.from_user.id
     username = call.from_user.username or "нет_юзернейма"
     code = generate_code()
-    item_name = f"{amount} звёзд"
     
     async with aiosqlite.connect("shop.db") as db:
-        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, item_name, code, "pending"))
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, f"{amount} звёзд", code, "pending"))
         order_id = cursor.lastrowid
         await db.commit()
 
@@ -180,15 +176,11 @@ async def show_usernames(call: CallbackQuery):
 async def confirm_uname(call: CallbackQuery):
     uname = call.data.replace("select_uname_", "")
     price = USERNAMES_DB[uname]
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да, покупаю", callback_data=f"confirm_uname_{uname}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_usernames")]
     ])
-    await call.message.edit_caption(
-        caption=f"🤔 <b>Вы уверены, что хотите купить юзернейм {uname} за {price} ⭐?</b>",
-        reply_markup=kb, parse_mode="HTML"
-    )
+    await call.message.edit_caption(caption=f"🤔 <b>Вы уверены, что хотите купить юзернейм {uname} за {price} ⭐?</b>", reply_markup=kb, parse_mode="HTML")
     await call.answer()
 
 @dp.callback_query(F.data.startswith("confirm_uname_"))
@@ -249,10 +241,10 @@ async def admin_done(call: CallbackQuery):
             if row:
                 await bot.send_message(
                     row[0], 
-                    f"🎉 <b>Заказ #{order_id} выполнен!</b>\n"
-                    f"Товар: {row[1]}\n\n"
-                    f"⭐ Напишите, пожалуйста, отзыв о нашем сервисе.\n"
-                    f"Просто отправьте сообщение в этот чат!",
+                    f"🎉 <b>Ура! Заказ #{order_id} успешно выполнен!</b> 🥳\n\n"
+                    f"📦 Товар: {row[1]}\n\n"
+                    f"⭐ <b>Пожалуйста, оставьте отзыв о нашем сервисе!</b>\n"
+                    f"Просто напишите ваше мнение прямо в этот чат. Нам очень важно знать, как мы работаем! 💖",
                     parse_mode="HTML"
                 )
     await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ВЫПОЛНЕНО</b>", parse_mode="HTML")
@@ -270,11 +262,16 @@ async def admin_reject(call: CallbackQuery):
         async with db.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,)) as c:
             row = await c.fetchone()
             if row:
-                await bot.send_message(row[0], f"❌ <b>Заказ #{order_id} отклонен.</b>\n\nЕсли вы оплатили, напишите менеджеру: @{ADMIN_USERNAME}", parse_mode="HTML")
+                await bot.send_message(
+                    row[0], 
+                    f"❌ <b>Заказ #{order_id} отклонен.</b>\n\n"
+                    f"Если вы оплатили, напишите менеджеру: @{ADMIN_USERNAME}", 
+                    parse_mode="HTML"
+                )
     await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
-    await call.answer("Отклонено.")
+    await call.answer("Клиенту отправлен отказ.")
 
-# --- Профиль и Пополнение (ЧЕРЕЗ XTR) ---
+# --- Профиль и Пополнение (XTR) ---
 @dp.callback_query(F.data == "menu_profile")
 async def show_profile(call: CallbackQuery):
     balance = await get_user(call.from_user.id)
@@ -303,7 +300,7 @@ async def topup_start(call: CallbackQuery, state: FSMContext):
     await call.message.edit_caption(
         caption="💳 <b>Пополнение баланса</b>\n\n"
                 "Сколько звёзд вы хотите купить на баланс?\n"
-                "Напишите в чат цифру (например: <code>50</code>):",
+                "Напишите в чат цифру от 25 до 1000 (например: <code>50</code>):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="menu_profile")]]), parse_mode="HTML"
     )
     await state.set_state(UserStates.waiting_for_topup_amount)
@@ -314,8 +311,10 @@ async def process_topup_amount(message: types.Message, state: FSMContext):
     if not message.text.isdigit():
         return await message.answer("❌ Пожалуйста, введи число (цифрами).")
     amount = int(message.text)
-    if amount < 15:
-        return await message.answer("❌ Минимальное пополнение — 15 звёзд.")
+    
+    if amount < 25 or amount > 1000:
+        return await message.answer("❌ Минимальное пополнение — 25 звёзд, максимальное — 1000. Введи другое число.")
+    
     await state.clear()
     
     await message.answer(
@@ -355,6 +354,37 @@ async def process_successful_payment(message: Message):
         await add_balance(message.from_user.id, topup)
         await add_history(message.from_user.id, "Пополнение баланса", amount)
         await message.answer(f"✅ <b>Баланс пополнен на {topup} ⭐!</b>\nТеперь можешь купить юзернейм.", parse_mode="HTML")
+
+# --- Прием отзывов ---
+@dp.message(UserStates.waiting_for_review)
+async def process_review(message: types.Message, state: FSMContext):
+    review_text = message.text
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет_юзернейма"
+    
+    if ADMIN_ID != 0:
+        await bot.send_message(
+            ADMIN_ID, 
+            f"💬 <b>НОВЫЙ ОТЗЫВ!</b>\n\n"
+            f"👤 От: @{username} (ID: <code>{user_id}</code>)\n\n"
+            f"💌 Текст отзыва:\n<i>{review_text}</i>",
+            parse_mode="HTML"
+        )
+    
+    await message.answer(
+        f"🙏 <b>Спасибо за ваш отзыв!</b> 💖\n\n"
+        f"Нам очень важно ваше мнение. Приходите еще! ✨",
+        parse_mode="HTML"
+    )
+    await state.clear()
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def catch_reviews(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    # Если пользователь не в процессе пополнения, а просто пишет текст — считаем это отзывом
+    if current_state is None:
+        await state.set_state(UserStates.waiting_for_review)
+        await process_review(message, state)
 
 # --- Помощь и Навигация ---
 @dp.callback_query(F.data == "menu_help")

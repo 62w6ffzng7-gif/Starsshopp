@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Звёзды за рубли, Юзернеймы за баланс, Пополнение XTR (50-1000), Отзывы*
+# *Звёзды за рубли, Юзернеймы за баланс, Пополнение XTR (25-1000), Отзывы, Секретные коды*
 # *зависимости: aiogram, aiosqlite, flask*
 
 import asyncio
@@ -299,7 +299,7 @@ async def topup_start(call: CallbackQuery, state: FSMContext):
     await call.message.edit_caption(
         caption="💳 <b>Пополнение баланса</b>\n\n"
                 "Сколько звёзд вы хотите купить на баланс?\n"
-                "Напишите в чат цифру от 50 до 1000 (например: <code>50</code>):",
+                "Напишите в чат цифру от 25 до 1000 (например: <code>50</code>):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_topup")]]), parse_mode="HTML"
     )
     await state.set_state(UserStates.waiting_for_topup_amount)
@@ -316,10 +316,16 @@ async def cancel_topup(call: CallbackQuery, state: FSMContext):
 async def process_topup_amount(message: types.Message, state: FSMContext):
     if not message.text.isdigit():
         return await message.answer("❌ Пожалуйста, введи число (цифрами).")
+        
     amount = int(message.text)
     
-    if amount < 50 or amount > 1000:
-        return await message.answer("❌ Минимальное пополнение через Telegram — 50 звёзд, максимальное — 1000. Введи другое число.")
+    # ИСПРАВЛЕНО: Теперь от 25 до 1000, и сбрасываем состояние при ошибке
+    if amount < 25 or amount > 1000:
+        await state.clear()
+        return await message.answer(
+            "❌ Минимальное пополнение — 25 звёзд, максимальное — 1000. Введи другое число (например, 50):",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Попробовать снова", callback_data="topup_start")]])
+        )
     
     await state.clear()
     

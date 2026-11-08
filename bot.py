@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Полный магазин: фото, реакции, баланс, юзернеймы, себе/другу, оплата XTR*
+# *Магазин: везде смайлики, 15 звезд в наличии, 25/50 нет, отзывы, кнопки админа*
 # *зависимости: aiogram, aiosqlite, flask*
 
 import asyncio
@@ -12,8 +12,7 @@ import threading
 from flask import Flask
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, 
-                           FSInputFile, LabeledPrice, PreCheckoutQuery, Message)
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -22,8 +21,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9040235874:AAGSGvWV-nwd4kn32OADEn0ob_zp_M8tHKw")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ADMIN_USERNAME = "moscow_1488"
-
-# Ссылка на картинку (замени на свою, если нужно)
 IMAGE_URL = "https://github.com/62w6ffzng7-gif/Starsshopp/raw/main/IMG_1577.jpeg"
 
 # База юзернеймов (название: цена в звездах)
@@ -36,370 +33,276 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- Состояния (FSM) ---
 class UserStates(StatesGroup):
-    waiting_for_topup_amount = State()
+    waiting_for_review = State()
 
-# --- Flask для Render ---
 app = Flask(__name__)
 @app.route('/')
 def health(): return "Shop is running", 200
 def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
-# --- База данных ---
+# --- БД ---
 async def init_db():
     async with aiosqlite.connect("shop.db") as db:
-        await db.execute("""CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            balance INTEGER DEFAULT 0
-        )""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS history (
+        await db.execute("""CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
+            username TEXT,
             item TEXT,
-            price INTEGER,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            code TEXT,
+            status TEXT
         )""")
         await db.commit()
 
-async def get_user(user_id):
-    async with aiosqlite.connect("shop.db") as db:
-        async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                await db.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
-                await db.commit()
-                return 0
-            return row[0]
-
-async def add_balance(user_id, amount):
-    await get_user(user_id)
-    async with aiosqlite.connect("shop.db") as db:
-        await db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-        await db.commit()
-
-async def add_history(user_id, item, price):
-    async with aiosqlite.connect("shop.db") as db:
-        await db.execute("INSERT INTO history (user_id, item, price) VALUES (?, ?, ?)", (user_id, item, price))
-        await db.commit()
+def generate_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 # --- Главное меню ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await get_user(message.from_user.id)
-    
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
-    kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
     kb.adjust(1)
     
     caption = (
         "👋 <b>Добро пожаловать в StarShop!</b> 🌟\n\n"
-        "Твой лучший проводник в мир Telegram-звёзд и красивых юзернеймов. 🚀\n"
-        "У нас быстро, выгодно и безопасно!\n\n"
+        "✨ Твой лучший проводник в мир Telegram-звёзд и красивых юзернеймов! 🚀\n"
+        "💖 У нас быстро, выгодно и безопасно!\n\n"
         "👇 Выбирай раздел и погнали:"
     )
-    
     try:
-        if IMAGE_URL.startswith("http"):
-            await message.answer_photo(photo=IMAGE_URL, caption=caption, reply_markup=kb.as_markup(), parse_mode="HTML")
-        else:
-            photo = FSInputFile(IMAGE_URL)
-            await message.answer_photo(photo=photo, caption=caption, reply_markup=kb.as_markup(), parse_mode="HTML")
+        await message.answer_photo(photo=IMAGE_URL, caption=caption, reply_markup=kb.as_markup(), parse_mode="HTML")
     except Exception:
         await message.answer(caption, reply_markup=kb.as_markup(), parse_mode="HTML")
     
     try:
-        await bot.set_message_reaction(
-            chat_id=message.chat.id,
-            message_id=message.message_id,
-            reaction=[types.ReactionTypeEmoji(emoji="❤️")]
-        )
+        await bot.set_message_reaction(chat_id=message.chat.id, message_id=message.message_id, reaction=[types.ReactionTypeEmoji(emoji="❤️")])
     except Exception:
         pass
 
-# --- Меню покупки звезд ---
+# --- Покупка звезд ---
 @dp.callback_query(F.data == "menu_buy")
 async def buy_stars_menu(call: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🌟 15 звёзд — 30₽", callback_data="select_stars_15")
+    kb.button(text="❌ 25 звёзд (Нет в наличии)", callback_data="out_of_stock")
+    kb.button(text="❌ 50 звёзд (Нет в наличии)", callback_data="out_of_stock")
+    kb.button(text="🔙 Назад", callback_data="back_to_start")
+    kb.adjust(1)
+    await call.message.edit_caption(caption="🛒 <b>Выбери пакет звёзд:</b>\n\n<i>Пока доступен только стартовый пакет! 😉</i>", reply_markup=kb.as_markup(), parse_mode="HTML")
+    await call.answer()
+
+@dp.callback_query(F.data == "out_of_stock")
+async def out_of_stock(call: CallbackQuery):
+    await call.answer("😢 Ой! Этого пакета сейчас нет в наличии. Выбери 15 звёзд!", show_alert=True)
+
+@dp.callback_query(F.data.startswith("select_stars_"))
+async def confirm_stars(call: CallbackQuery):
+    amount = int(call.data.split("_")[2])
+    price = {15: 30, 25: 50, 50: 95}[amount]
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👤 Себе", callback_data="buy_self")],
-        [InlineKeyboardButton(text="🎁 Другу", callback_data="buy_friend")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]
+        [InlineKeyboardButton(text="✅ Да, покупаю", callback_data=f"confirm_stars_{amount}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_buy")]
     ])
     await call.message.edit_caption(
-        caption="💫 <b>Для кого ты хочешь купить звёзды?</b>\n\nВыбери вариант ниже 👇",
+        caption=f"🤔 <b>Вы уверены, что хотите купить {amount} звёзд за {price}₽?</b> 💫",
         reply_markup=kb, parse_mode="HTML"
     )
     await call.answer()
 
-@dp.callback_query(F.data.in_(["buy_self", "buy_friend"]))
-async def select_package(call: CallbackQuery):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🌟 15 звёзд — 30 ⭐", callback_data="invoice_stars_15")
-    kb.button(text="🌟 25 звёзд — 50 ⭐", callback_data="invoice_stars_25")
-    kb.button(text="🌟 50 звёзд — 95 ⭐", callback_data="invoice_stars_50")
-    kb.button(text="🔙 Назад", callback_data="menu_buy")
-    kb.adjust(1)
-    
-    target = "себе" if call.data == "buy_self" else "другу"
-    await call.message.edit_caption(
-        caption=f"🛒 <b>Отлично, покупаем {target}!</b>\n\nВыбери пакет (оплата в звёздах Telegram):",
-        reply_markup=kb.as_markup(), parse_mode="HTML"
-    )
-    await call.answer()
-
-# --- Инвойс для звёзд ---
-@dp.callback_query(F.data.startswith("invoice_stars_"))
-async def send_stars_invoice(call: CallbackQuery):
+@dp.callback_query(F.data.startswith("confirm_stars_"))
+async def process_stars_order(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
-    prices = {15: 30, 25: 50, 50: 95}
-    price = prices[amount]
+    user_id = call.from_user.id
+    username = call.from_user.username or "нет_юзернейма"
+    code = generate_code()
+    item_name = f"{amount} звёзд"
     
-    await bot.send_invoice(
-        chat_id=call.from_user.id,
-        title=f"Покупка {amount} звёзд",
-        description=f"Зачисление {amount} звёзд на ваш аккаунт.",
-        payload=f"buy_stars_{amount}",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"{amount} звёзд", amount=price)],
+    async with aiosqlite.connect("shop.db") as db:
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, item_name, code, "pending"))
+        order_id = cursor.lastrowid
+        await db.commit()
+
+    await call.message.edit_caption(
+        caption=f"🎉 <b>Заказ #{order_id} успешно создан!</b>\n\n"
+                f"📦 Товар: {item_name}\n"
+                f"🔑 <b>Секретный код: <code>{code}</code></b>\n\n"
+                f"💬 Напиши нашему менеджеру и отправь ему этот код, чтобы оплатить и получить звёзды:\n"
+                f"👉 <b>@{ADMIN_USERNAME}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👨‍💻 Написать менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]
+        ]), parse_mode="HTML"
     )
+    
+    if ADMIN_ID != 0:
+        kb_admin = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"),
+             InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]
+        ])
+        await bot.send_message(ADMIN_ID, f"🔔 <b>НОВЫЙ ЗАКАЗ #{order_id}</b>\n\n👤 Клиент: @{username}\n🎁 Товар: {item_name}\n🔑 Код: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-# --- Меню Юзернеймов ---
+# --- Покупка Юзернеймов ---
 @dp.callback_query(F.data == "menu_usernames")
 async def show_usernames(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
     for uname, price in USERNAMES_DB.items():
-        kb.button(text=f"👑 {uname} — {price} ⭐", callback_data=f"buy_uname_{uname}")
+        kb.button(text=f"👑 {uname} — {price} ⭐", callback_data=f"select_uname_{uname}")
     kb.button(text="🔙 Назад", callback_data="back_to_start")
     kb.adjust(1)
-    
-    await call.message.edit_caption(
-        caption="👑 <b>Эксклюзивные юзернеймы</b>\n\nВыбери ник. Оплата списывается с твоего баланса звёзд!",
-        reply_markup=kb.as_markup(), parse_mode="HTML"
-    )
+    await call.message.edit_caption(caption="👑 <b>Эксклюзивные юзернеймы</b>\n\n🌟 Выбери ник, который хочешь забрать себе:", reply_markup=kb.as_markup(), parse_mode="HTML")
     await call.answer()
 
-@dp.callback_query(F.data.startswith("buy_uname_"))
+@dp.callback_query(F.data.startswith("select_uname_"))
 async def confirm_uname(call: CallbackQuery):
-    uname = call.data.replace("buy_uname_", "")
+    uname = call.data.replace("select_uname_", "")
     price = USERNAMES_DB[uname]
-    secret = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💸 Оплатить {price} ⭐", callback_data=f"confirm_uname_{uname}_{secret}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_usernames")]
+        [InlineKeyboardButton(text="✅ Да, покупаю", callback_data=f"confirm_uname_{uname}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_usernames")]
     ])
-    
     await call.message.edit_caption(
-        caption=f"🤔 <b>Вы точно хотите купить {uname} за {price} звёзд?</b>\n\nСумма спишется с баланса.",
+        caption=f"🤔 <b>Вы уверены, что хотите купить юзернейм {uname} за {price} ⭐?</b> 💎",
         reply_markup=kb, parse_mode="HTML"
     )
     await call.answer()
 
 @dp.callback_query(F.data.startswith("confirm_uname_"))
-async def process_uname_payment(call: CallbackQuery):
-    parts = call.data.split("_")
-    uname = parts[2]
-    secret = parts[3]
-    price = USERNAMES_DB[uname]
+async def process_uname_order(call: CallbackQuery):
+    uname = call.data.replace("confirm_uname_", "")
     user_id = call.from_user.id
+    username = call.from_user.username or "нет_юзернейма"
+    code = generate_code()
     
-    balance = await get_user(user_id)
-    
-    if balance >= price:
-        await add_balance(user_id, -price)
-        await add_history(user_id, f"Юзернейм {uname}", price)
-        
-        await call.message.edit_caption(
-            caption=f"🎉 <b>Успешно!</b>\n\nТы купил {uname}.\n"
-                    f"👇 Напиши менеджеру для передачи прав.\n\n"
-                    f"🔑 <b>Секретный код: <code>{secret}</code></b>\n",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="👨‍💻 Написать менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]
-            ]), parse_mode="HTML"
-        )
-        if ADMIN_ID != 0:
-            await bot.send_message(ADMIN_ID, f"🔔 <b>ПРОДАН ЮЗЕРНЕЙМ!</b>\n\nКлиент: @{call.from_user.username}\nТовар: {uname}\nКод: <code>{secret}</code>", parse_mode="HTML")
-    else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="topup_start")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_usernames")]
-        ])
-        await call.message.edit_caption(
-            caption=f"❌ <b>Недостаточно средств!</b>\n\nБаланс: {balance} ⭐. Нужно: {price} ⭐.",
-            reply_markup=kb, parse_mode="HTML"
-        )
-    await call.answer()
-
-# --- Профиль ---
-@dp.callback_query(F.data == "menu_profile")
-async def show_profile(call: CallbackQuery):
-    user_id = call.from_user.id
-    balance = await get_user(user_id)
-    
-    history_text = ""
     async with aiosqlite.connect("shop.db") as db:
-        async with db.execute("SELECT item, price, date FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 3", (user_id,)) as cursor:
-            rows = await cursor.fetchall()
-            if not rows:
-                history_text = "Покупок пока нет."
-            else:
-                for item, price, date in rows:
-                    history_text += f"• {item} — {price} ⭐\n"
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="topup_start")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]
-    ])
-    
-    await call.message.edit_caption(
-        caption=f"👤 <b>Твой профиль</b>\n\n"
-                f"🆔 ID: <code>{user_id}</code>\n"
-                f"💰 Баланс: <b>{balance} ⭐</b>\n\n"
-                f"📜 <b>Последние покупки:</b>\n{history_text}\n"
-                f"<i>Пополнение баланса нужно для покупки юзернеймов.</i>",
-        reply_markup=kb, parse_mode="HTML"
-    )
-    await call.answer()
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, f"Юзернейм {uname}", code, "pending"))
+        order_id = cursor.lastrowid
+        await db.commit()
 
-# --- Пополнение баланса ---
-@dp.callback_query(F.data == "topup_start")
-async def topup_start(call: CallbackQuery, state: FSMContext):
     await call.message.edit_caption(
-        caption="💳 <b>Пополнение баланса</b>\n\n"
-                "Сколько звёзд вы хотите пополнить?\n"
-                "Напишите в чат цифру (например: <code>50</code>):",
+        caption=f"🎉 <b>Заказ #{order_id} успешно создан!</b>\n\n"
+                f"📦 Товар: Юзернейм {uname}\n"
+                f"🔑 <b>Секретный код: <code>{code}</code></b>\n\n"
+                f"💬 Напиши нашему менеджеру и отправь ему этот код:\n"
+                f"👉 <b>@{ADMIN_USERNAME}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Отмена", callback_data="menu_profile")]
+            [InlineKeyboardButton(text="👨‍💻 Написать менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]
         ]), parse_mode="HTML"
     )
-    await state.set_state(UserStates.waiting_for_topup_amount)
+    
+    if ADMIN_ID != 0:
+        kb_admin = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"),
+             InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]
+        ])
+        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ ЮЗЕРНЕЙМА #{order_id}</b>\n\n👤 Клиент: @{username}\n🎁 Товар: {uname}\n🔑 Код: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-@dp.message(UserStates.waiting_for_topup_amount)
-async def process_topup_amount(message: types.Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("❌ Пожалуйста, введи число (цифрами).")
-        return
+# --- Кнопки админа ---
+@dp.callback_query(F.data.startswith("adm_done_"))
+async def admin_done(call: CallbackQuery):
+    if call.from_user.username != ADMIN_USERNAME: 
+        return await call.answer("У вас нет прав! 🚫", show_alert=True)
     
-    amount = int(message.text)
-    if amount < 15:
-        await message.answer("❌ Минимальное пополнение — 15 звёзд.")
-        return
-        
-    await state.clear()
+    order_id = call.data.split("_")[2]
+    async with aiosqlite.connect("shop.db") as db:
+        await db.execute("UPDATE orders SET status = 'done' WHERE id = ?", (order_id,))
+        await db.commit()
+        async with db.execute("SELECT user_id, item FROM orders WHERE id = ?", (order_id,)) as c:
+            row = await c.fetchone()
+            if row:
+                await bot.send_message(
+                    row[0], 
+                    f"🎉 <b>Ура! Заказ #{order_id} выполнен!</b> 🥳\n\n"
+                    f"📦 Товар: {row[1]}\n\n"
+                    f"⭐ <b>Напишите, пожалуйста, отзыв о нашем сервисе.</b>\n"
+                    f"Просто отправьте сообщение в этот чат с вашим мнением! Нам очень важно 💖",
+                    parse_mode="HTML"
+                )
+    await call.message.edit_text(f"{call.message.text}\n\n✅ <b>ВЫПОЛНЕНО</b>", parse_mode="HTML")
+    await call.answer("Клиенту отправлено уведомление! ✨")
+
+@dp.callback_query(F.data.startswith("adm_reject_"))
+async def admin_reject(call: CallbackQuery):
+    if call.from_user.username != ADMIN_USERNAME: 
+        return await call.answer("У вас нет прав! 🚫", show_alert=True)
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"⭐ Оплатить {amount} звёзд", callback_data=f"invoice_topup_{amount}")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_profile")]
-    ])
+    order_id = call.data.split("_")[2]
+    async with aiosqlite.connect("shop.db") as db:
+        await db.execute("UPDATE orders SET status = 'rejected' WHERE id = ?", (order_id,))
+        await db.commit()
+        async with db.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,)) as c:
+            row = await c.fetchone()
+            if row:
+                await bot.send_message(row[0], f"❌ <b>Заказ #{order_id} отклонен.</b>\n\nЕсли вы оплатили, напишите менеджеру: @{ADMIN_USERNAME} 🙏", parse_mode="HTML")
+    await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
+    await call.answer("Отклонено.")
+
+# --- Прием отзыва ---
+@dp.message(UserStates.waiting_for_review)
+async def process_review(message: types.Message, state: FSMContext):
+    review_text = message.text
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет_юзернейма"
+    
+    if ADMIN_ID != 0:
+        await bot.send_message(
+            ADMIN_ID, 
+            f"💬 <b>НОВЫЙ ОТЗЫВ!</b>\n\n"
+            f"👤 От: @{username} (ID: <code>{user_id}</code>)\n\n"
+            f"💌 Текст отзыва:\n<i>{review_text}</i>",
+            parse_mode="HTML"
+        )
     
     await message.answer(
-        f"🤔 <b>Вы точно хотите перевести {amount} звёзд боту?</b>\n\n"
-        f"Нажми кнопку ниже, чтобы перевести звёзды через официальный инвойс Telegram.",
-        reply_markup=kb, parse_mode="HTML"
+        f"🙏 <b>Спасибо за ваш отзыв!</b> 💖\n\n"
+        f"Нам очень важно ваше мнение. Приходите еще! ✨",
+        parse_mode="HTML"
     )
+    await state.clear()
 
-@dp.callback_query(F.data.startswith("invoice_topup_"))
-async def send_topup_invoice(call: CallbackQuery):
-    amount = int(call.data.split("_")[2])
-    
-    await bot.send_invoice(
-        chat_id=call.from_user.id,
-        title=f"Пополнение баланса на {amount} ⭐",
-        description=f"Пополнение внутреннего баланса в StarShop.",
-        payload=f"topup_{amount}",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"Пополнение {amount} ⭐", amount=amount)],
-    )
-    await call.answer()
+@dp.message(F.text & ~F.text.startswith("/"))
+async def catch_reviews(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        await state.set_state(UserStates.waiting_for_review)
+        await process_review(message, state)
 
-# --- Обработка оплаты ---
-@dp.pre_checkout_query()
-async def process_pre_checkout(pre_checkout_q: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def process_successful_payment(message: Message):
-    payload = message.successful_payment.invoice_payload
-    amount_stars = message.successful_payment.total_amount
-    user_id = message.from_user.id
-    
-    if payload.startswith("buy_stars_"):
-        stars_to_give = int(payload.split("_")[2])
-        await add_history(user_id, f"Покупка {stars_to_give} звезд", amount_stars)
-        
-        if ADMIN_ID != 0:
-            await bot.send_message(ADMIN_ID, f"💰 <b>ОПЛАТА ЗВЕЗДАМИ!</b>\n\nКлиент: @{message.from_user.username}\nКупил: {stars_to_give} звезд\nСумма: {amount_stars} ⭐", parse_mode="HTML")
-            
-        await message.answer(
-            f"✅ <b>Оплата прошла успешно!</b>\n\n"
-            f"Вы купили {stars_to_give} звёзд за {amount_stars} ⭐.\n"
-            f"Админ получил уведомление и выдаст их вам.",
-            parse_mode="HTML"
-        )
-        
-    elif payload.startswith("topup_"):
-        topup_amount = int(payload.split("_")[1])
-        await add_balance(user_id, topup_amount)
-        await add_history(user_id, "Пополнение баланса", amount_stars)
-        
-        if ADMIN_ID != 0:
-            await bot.send_message(ADMIN_ID, f"💰 <b>ПОПОЛНЕНИЕ БАЛАНСА!</b>\n\nКлиент: @{message.from_user.username}\nПополнил: {topup_amount} ⭐", parse_mode="HTML")
-            
-        await message.answer(
-            f"✅ <b>Баланс пополнен!</b>\n\n"
-            f"На ваш счет зачислено {topup_amount} ⭐.\n"
-            f"Теперь вы можете купить юзернейм.",
-            parse_mode="HTML"
-        )
-
-# --- Помощь ---
+# --- Помощь и Навигация ---
 @dp.callback_query(F.data == "menu_help")
 async def show_help(call: CallbackQuery):
-    help_text = (
-        "📖 <b>Помощь и информация</b>\n\n"
-        "🌟 <b>Покупка звёзд:</b>\n"
-        "Вы можете купить звёзды себе или другу. Оплата происходит официально через Telegram Stars (XTR). После оплаты админ выдаст вам звёзды вручную.\n\n"
-        f"👑 <b>Покупка юзернеймов:</b>\n"
-        f"Юзернеймы покупаются за внутренние звёзды (баланс). Когда вы купите ник, бот выдаст секретный код. Напишите менеджеру (@{ADMIN_USERNAME}), скиньте код и получите свой ник.\n\n"
-        "💳 <b>Пополнение баланса:</b>\n"
-        "Баланс нужен для покупки юзернеймов. Нажмите «Пополнить баланс», введите нужное количество звёзд и оплатите официальным инвойсом. Звёзды зачислятся на баланс в боте."
+    text = (
+        "📖 <b>Как это работает?</b>\n\n"
+        "1️⃣ Выбираешь товар (звёзды или юзернейм). 🌟\n"
+        "2️⃣ Бот спрашивает подтверждение и выдает <b>секретный код</b>. 🔑\n"
+        f"3️⃣ Пишешь нашему менеджеру (@{ADMIN_USERNAME}), скидываешь код. 💬\n"
+        "4️⃣ Договариваетесь об оплате, и менеджер выдает товар. 🎁\n"
+        "5️⃣ После выдачи вы можете оставить отзыв прямо в боте. ⭐\n\n"
+        "Это сделано для безопасности, чтобы никто не украл ваш заказ. 🛡"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍💻 Написать админу", url=f"https://t.me/{ADMIN_USERNAME}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]
-    ])
-    await call.message.edit_caption(caption=help_text, reply_markup=kb, parse_mode="HTML")
+    await call.message.edit_caption(caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Админ", url=f"https://t.me/{ADMIN_USERNAME}")], [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]]), parse_mode="HTML")
     await call.answer()
 
-# --- Возврат в меню ---
 @dp.callback_query(F.data == "back_to_start")
 async def back_to_start(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
-    kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
     kb.adjust(1)
-    
-    await call.message.edit_caption(
-        caption="👋 <b>Главное меню StarShop!</b> 🌟\n\n👇 Выбирай нужный раздел:",
-        reply_markup=kb.as_markup(), parse_mode="HTML"
-    )
+    await call.message.edit_caption(caption="👋 <b>Главное меню</b>\n\n👇 Выбирай нужный раздел:", reply_markup=kb.as_markup(), parse_mode="HTML")
     await call.answer()
 
 async def main():
     await init_db()
     threading.Thread(target=run_flask, daemon=True).start()
-    print(f"[*] StarShop Ultimate запущен. Админ: @{ADMIN_USERNAME}")
+    print(f"[*] StarShop запущен.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

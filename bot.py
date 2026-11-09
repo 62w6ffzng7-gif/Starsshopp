@@ -180,7 +180,6 @@ async def process_minigame_bet(message: types.Message, state: FSMContext):
         
     await state.clear()
     
-    # ИСПРАВЛЕНИЕ: Сделали кнопки компактными, чтобы они влезали в один ряд
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔴", callback_data=f"mg_bet_red_{bet_amount}"),
@@ -253,7 +252,6 @@ async def play_color_game(call: CallbackQuery):
     
     text = f"{result_text}\n\n💰 Новый баланс: <b>{new_balance} ⭐</b>"
     
-    # ИСПРАВЛЕНИЕ: Удаляем сообщение с игрой и отправляем результат с картинкой
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer("Результат на экране!")
 
@@ -624,9 +622,14 @@ async def process_review(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-@dp.message(F.text & ~F.text.startswith("/"))
+# ИСПРАВЛЕНИЕ: Отзывы ловятся, только если это не промокод и не команды
+@dp.message(F.text & ~F.text.startswith("/") & ~F.text.startswith("STARTOP2026"))
 async def catch_reviews(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
+    # Если пользователь в процессе игры или ввода суммы, не перехватываем это как отзыв
+    if current_state in [UserStates.waiting_for_minigame_bet, UserStates.waiting_for_topup_amount, UserStates.waiting_for_promo]:
+        return
+        
     if current_state is None:
         await state.set_state(UserStates.waiting_for_review)
         await process_review(message, state)

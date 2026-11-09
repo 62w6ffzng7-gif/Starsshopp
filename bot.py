@@ -179,11 +179,12 @@ async def process_minigame_bet(message: types.Message, state: FSMContext):
         
     await state.clear()
     
+    # ИСПРАВЛЕНО: Кнопки только с эмодзи, чтобы не обрезались
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔴 Красный", callback_data=f"mg_bet_red_{bet_amount}"),
-            InlineKeyboardButton(text="⚫ Черный", callback_data=f"mg_bet_black_{bet_amount}"),
-            InlineKeyboardButton(text="🟢 Зеленый", callback_data=f"mg_bet_green_{bet_amount}")
+            InlineKeyboardButton(text="🔴", callback_data=f"mg_bet_red_{bet_amount}"),
+            InlineKeyboardButton(text="⚫", callback_data=f"mg_bet_black_{bet_amount}"),
+            InlineKeyboardButton(text="🟢", callback_data=f"mg_bet_green_{bet_amount}")
         ],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_minigames")]
     ])
@@ -210,15 +211,16 @@ async def play_color_game(call: CallbackQuery):
         await call.answer("🚫 Недостаточно звезд!", show_alert=True)
         return
 
-    # 1. Анимация "Крутим"
-    await call.message.edit_caption(
-        caption=f"🎲 <b>Крутим рулетку...</b>\n\nТвоя ставка: <b>{bet_amount} ⭐</b>\nОжидай результат... ⏳",
-        parse_mode="HTML",
-        reply_markup=None # Убираем кнопки, чтобы не нажимали повторно
-    )
+    # ИСПРАВЛЕНО: Удаляем сообщение с кнопками и показываем "Крутим" текстом
+    try:
+        await call.message.delete()
+    except:
+        pass
+        
+    msg_wait = await call.message.answer("🎲 <b>Крутим рулетку...</b>\n\nОжидай результат... ⏳", parse_mode="HTML")
     await asyncio.sleep(2) # Пауза для эффекта
-
-    # 2. Логика игры
+    
+    # Логика игры
     win = False
     if lose_streak > 0:
         win = False
@@ -243,7 +245,7 @@ async def play_color_game(call: CallbackQuery):
 
     color_ru = {"red": "🔴 КРАСНЫЙ", "black": "⚫ ЧЕРНЫЙ", "green": "🟢 ЗЕЛЕНЫЙ"}
 
-    # 3. Подсчет баланса и результат
+    # Подсчет баланса и результат
     if win:
         payout = bet_amount * 2
         await add_balance(user_id, bet_amount) # Чистая прибавка (ставка возвращается + выигрыш)
@@ -262,8 +264,12 @@ async def play_color_game(call: CallbackQuery):
     
     final_text = f"{result_text}\n\n💰 Новый баланс: <b>{new_balance} ⭐</b>"
     
-    # 4. Отправляем результат с картинкой
-    await send_menu_with_photo(call.message.chat.id, final_text, kb, call.message.message_id)
+    # Удаляем сообщение "Крутим" и отправляем результат с картинкой
+    try:
+        await msg_wait.delete()
+    except:
+        pass
+    await send_menu_with_photo(call.message.chat.id, final_text, kb)
     await call.answer("Результат на экране!")
 
 # --- Покупка звезд ---

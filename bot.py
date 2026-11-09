@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Звёзды за рубли, Юзернеймы за баланс, Пополнение XTR (25-1000), Отзывы, Секретные коды*
+# *Магазин Starsshop: Мини-игра "Угадай цвет", подкрутка, баланс, юзернеймы*
 # *зависимости: aiogram, aiosqlite, flask*
 
 import asyncio
@@ -36,29 +36,36 @@ dp = Dispatcher()
 class UserStates(StatesGroup):
     waiting_for_topup_amount = State()
     waiting_for_review = State()
+    waiting_for_minigame_bet = State()
 
 app = Flask(__name__)
 @app.route('/')
-def health(): return "Shop is running", 200
+def health(): return "Starsshop is running", 200
 def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
 # --- БД ---
 async def init_db():
     async with aiosqlite.connect("shop.db") as db:
-        await db.execute("""CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)""")
+        # Добавили win_streak для подкрутки мини-игры
+        await db.execute("""CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0, win_streak INTEGER DEFAULT 0, lose_streak INTEGER DEFAULT 0)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, item TEXT, price INTEGER, date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, item TEXT, code TEXT, status TEXT)""")
         await db.commit()
 
 async def get_user(user_id):
     async with aiosqlite.connect("shop.db") as db:
-        async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
+        async with db.execute("SELECT balance, win_streak, lose_streak FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
             if not row:
                 await db.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
                 await db.commit()
-                return 0
-            return row[0]
+                return 0, 0, 0
+            return row[0], row[1], row[2]
+
+async def update_game_stats(user_id, win_streak, lose_streak):
+    async with aiosqlite.connect("shop.db") as db:
+        await db.execute("UPDATE users SET win_streak = ?, lose_streak = ? WHERE user_id = ?", (win_streak, lose_streak, user_id))
+        await db.commit()
 
 async def add_balance(user_id, amount):
     await get_user(user_id)
@@ -81,13 +88,14 @@ async def cmd_start(message: types.Message):
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
+    kb.button(text="🎮 Мини-игры", callback_data="menu_minigames")
     kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
     kb.adjust(1)
     
     caption = (
-        "👋 <b>Добро пожаловать в StarShop!</b> 🌟\n\n"
+        "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n"
         "💎 Здесь ты можешь купить звёзды за рубли или крутые юзернеймы за баланс.\n"
         "🚀 Быстро, выгодно и безопасно!\n\n"
         "👇 Выбирай раздел:"
@@ -102,7 +110,135 @@ async def cmd_start(message: types.Message):
     except Exception:
         pass
 
-# --- Покупка звезд (ЗА РУБЛИ) ---
+# --- Мини-игры ---
+@dp.callback_query(F.data == "menu_minigames")
+async def minigames_menu(call: CallbackQuery):
+    balance, _, _ = await get_user(call.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎨 Угадай цвет", callback_data="mg_color")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]
+    ])
+    await call.message.edit_caption(
+        caption=f"🎮 <b>Мини-игры</b>\n\n"
+                f"💰 Ваш баланс: <b>{balance} ⭐</b>\n\n"
+                f"<i>Эти звезды нужны для покупки юзернеймов во вкладке «Купить юзернейм».</i>\n\n"
+                f"👇 Выбирай игру:",
+        reply_markup=kb, parse_mode="HTML"
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "mg_color")
+async def start_color_game(call: CallbackQuery, state: FSMContext):
+    balance, _, _ = await get_user(call.from_user.id)
+    await state.set_state(UserStates.waiting_for_minigame_bet)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_minigames")]
+    ])
+    await call.message.edit_caption(
+        caption=f"🎨 <b>Угадай цвет</b>\n\n"
+                f"💰 Ваш баланс: <b>{balance} ⭐</b>\n\n"
+                f"Введите количество звезд для ставки (от 5 до 50):\n\n"
+                f"<i>Эти звезды нужны для покупки юзернеймов во вкладке «Купить юзернейм».</i>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+    await call.answer()
+
+@dp.message(UserStates.waiting_for_minigame_bet)
+async def process_minigame_bet(message: types.Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("❌ Пожалуйста, введи число (цифрами).")
+        
+    bet_amount = int(message.text)
+    if bet_amount < 5 or bet_amount > 50:
+        return await message.answer("❌ Ставка должна быть от 5 до 50 звезд. Попробуй еще раз:")
+        
+    balance, _, _ = await get_user(message.from_user.id)
+    if balance < bet_amount:
+        return await message.answer(f"❌ Недостаточно звезд на балансе! У тебя {balance} ⭐.")
+        
+    await state.clear()
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔴 Красный (x2)", callback_data=f"mg_bet_red_{bet_amount}")
+    kb.button(text="⚫ Черный (x2)", callback_data=f"mg_bet_black_{bet_amount}")
+    kb.button(text="🟢 Зеленый (x2)", callback_data=f"mg_bet_green_{bet_amount}")
+    kb.button(text="🔙 Отмена", callback_data="menu_minigames")
+    kb.adjust(3, 1)
+    
+    await message.answer(
+        f"🎨 <b>Выбери цвет</b>\n\n"
+        f"Твоя ставка: <b>{bet_amount} ⭐</b>\n\n"
+        f"🔴 Красный — x2\n"
+        f"⚫ Черный — x2\n"
+        f"🟢 Зеленый — x2",
+        reply_markup=kb.as_markup(), parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data.startswith("mg_bet_"))
+async def play_color_game(call: CallbackQuery):
+    _, chosen_color, bet_amount = call.data.split("_")
+    bet_amount = int(bet_amount)
+    user_id = call.from_user.id
+    balance, win_streak, lose_streak = await get_user(user_id)
+    
+    if balance < bet_amount:
+        await call.answer("🚫 Недостаточно звезд!", show_alert=True)
+        return
+
+    # --- ЛОГИКА ПОДКРУТКИ ---
+    win = False
+    
+    if lose_streak > 0:
+        # Принудительный проигрыш
+        win = False
+        lose_streak -= 1
+    else:
+        # Если выиграл 2 или 3 раза подряд, включаем серию проигрышей
+        if win_streak >= 2:
+            win = False
+            lose_streak = random.randint(4, 5) # Следующие 4-5 раз проиграет
+            win_streak = 0
+        else:
+            # Шанс выигрыша 40% (чтобы выиграть 2 раза подряд шанс был 16%)
+            if random.random() < 0.40:
+                win = True
+                win_streak += 1
+            else:
+                win = False
+                win_streak = 0
+
+    # Определяем выпавший цвет
+    if win:
+        winning_color = chosen_color
+    else:
+        winning_color = random.choice([c for c in ["red", "black", "green"] if c != chosen_color])
+
+    # Выплата
+    if win:
+        payout = bet_amount * 2
+        await add_balance(user_id, bet_amount) # Возврат ставки + выигрыш (итого +bet)
+        result_text = f"🎉 <b>ПОБЕДА!</b> Выпал {winning_color.upper()}. Ты выиграл <b>{payout} ⭐</b>!"
+    else:
+        await add_balance(user_id, -bet_amount)
+        result_text = f"😢 <b>ПРОИГРЫШ.</b> Выпал {winning_color.upper()}. Ты потерял <b>{bet_amount} ⭐</b>."
+        
+    await update_game_stats(user_id, win_streak, lose_streak)
+    new_balance, _, _ = await get_user(user_id)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎨 Играть еще", callback_data="mg_color")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="menu_minigames")]
+    ])
+    
+    await call.message.edit_caption(
+        caption=f"{result_text}\n\n"
+                f"💰 Новый баланс: <b>{new_balance} ⭐</b>",
+        reply_markup=kb, parse_mode="HTML"
+    )
+    await call.answer()
+
+# --- Покупка звезд ---
 @dp.callback_query(F.data == "menu_buy")
 async def buy_stars_menu(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
@@ -160,7 +296,7 @@ async def process_stars_order(call: CallbackQuery):
         await bot.send_message(ADMIN_ID, f"🔔 <b>НОВЫЙ ЗАКАЗ ЗВЁЗД #{order_id}</b>\nКлиент: @{username}\nТовар: {amount} звёзд за 30₽\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-# --- Покупка Юзернеймов (ЗА БАЛАНС) ---
+# --- Покупка Юзернеймов ---
 @dp.callback_query(F.data == "menu_usernames")
 async def show_usernames(call: CallbackQuery):
     kb = InlineKeyboardBuilder()
@@ -190,7 +326,7 @@ async def process_uname_order(call: CallbackQuery):
     code = generate_code()
     price = USERNAMES_DB[uname]
     
-    balance = await get_user(user_id)
+    balance, _, _ = await get_user(user_id)
     if balance < price:
         return await call.message.edit_caption(
             caption=f"❌ <b>Недостаточно звёзд на балансе!</b>\n\nБаланс: {balance} ⭐. Нужно: {price} ⭐.\nПополни баланс в профиле!", 
@@ -270,10 +406,10 @@ async def admin_reject(call: CallbackQuery):
     await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
     await call.answer("Клиенту отправлен отказ.")
 
-# --- Профиль и Пополнение (XTR) ---
+# --- Профиль и Пополнение ---
 @dp.callback_query(F.data == "menu_profile")
 async def show_profile(call: CallbackQuery):
-    balance = await get_user(call.from_user.id)
+    balance, _, _ = await get_user(call.from_user.id)
     history_text = ""
     async with aiosqlite.connect("shop.db") as db:
         async with db.execute("SELECT item, price FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 3", (call.from_user.id,)) as cursor:
@@ -305,12 +441,10 @@ async def topup_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_topup_amount)
     await call.answer()
 
-# ИСПРАВЛЕННАЯ ОТМЕНА ПОПОЛНЕНИЯ
 @dp.callback_query(F.data == "cancel_topup")
 async def cancel_topup(call: CallbackQuery, state: FSMContext):
-    await state.clear() # Сбрасываем ожидание ввода
-    await call.message.edit_caption(caption="👋 <b>Главное меню</b>\n\n👇 Выбирай нужный раздел:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👤 Профиль", callback_data="menu_profile")]]), parse_mode="HTML")
-    await call.answer("Действие отменено")
+    await state.clear()
+    await show_profile(call)
 
 @dp.message(UserStates.waiting_for_topup_amount)
 async def process_topup_amount(message: types.Message, state: FSMContext):
@@ -319,13 +453,8 @@ async def process_topup_amount(message: types.Message, state: FSMContext):
         
     amount = int(message.text)
     
-    # ИСПРАВЛЕНО: Теперь от 25 до 1000, и сбрасываем состояние при ошибке
     if amount < 25 or amount > 1000:
-        await state.clear()
-        return await message.answer(
-            "❌ Минимальное пополнение — 25 звёзд, максимальное — 1000. Введи другое число (например, 50):",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Попробовать снова", callback_data="topup_start")]])
-        )
+        return await message.answer("❌ Минимальное пополнение — 25 звёзд, максимальное — 1000. Введи другое число:")
     
     await state.clear()
     
@@ -365,7 +494,7 @@ async def process_successful_payment(message: Message):
         topup = int(payload.split("_")[1])
         await add_balance(message.from_user.id, topup)
         await add_history(message.from_user.id, "Пополнение баланса", amount)
-        await message.answer(f"✅ <b>Баланс пополнен на {topup} ⭐!</b>\nТеперь можешь купить юзернейм.", parse_mode="HTML")
+        await message.answer(f"✅ <b>Баланс пополнен на {topup} ⭐!</b>\nТеперь можешь купить юзернейм или сыграть в мини-игры.", parse_mode="HTML")
 
 # --- Прием отзывов ---
 @dp.message(UserStates.waiting_for_review)
@@ -411,21 +540,22 @@ async def show_help(call: CallbackQuery):
 
 @dp.callback_query(F.data == "back_to_start")
 async def back_to_start(call: CallbackQuery, state: FSMContext):
-    await state.clear() # Сбрасываем состояния на всякий случай
+    await state.clear() 
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
+    kb.button(text="🎮 Мини-игры", callback_data="menu_minigames")
     kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
     kb.adjust(1)
-    await call.message.edit_caption(caption="👋 <b>Главное меню</b>\n\n👇 Выбирай нужный раздел:", reply_markup=kb.as_markup(), parse_mode="HTML")
+    await call.message.edit_caption(caption="👋 <b>Главное меню Starsshop</b>\n\n👇 Выбирай нужный раздел:", reply_markup=kb.as_markup(), parse_mode="HTML")
     await call.answer()
 
 async def main():
     await init_db()
     threading.Thread(target=run_flask, daemon=True).start()
-    print(f"[*] StarShop запущен.")
+    print(f"[*] Starsshop запущен.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

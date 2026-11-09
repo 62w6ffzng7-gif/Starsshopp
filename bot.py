@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: версия без мини-игр (Промокоды, Отзывы, Заказы)*
+# *Магазин Starsshop: Бонусы, Рассылка, Автовыдача, Перезагрузка*
 
 import asyncio
 import logging
@@ -8,6 +8,7 @@ import string
 import aiosqlite
 import os
 import threading
+from datetime import datetime, timedelta
 from flask import Flask
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -36,6 +37,7 @@ class UserStates(StatesGroup):
     waiting_for_topup_amount = State()
     waiting_for_review = State()
     waiting_for_promo = State()
+    waiting_for_broadcast = State()
 
 app = Flask(__name__)
 @app.route('/')
@@ -45,22 +47,32 @@ def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 # --- БД ---
 async def init_db():
     async with aiosqlite.connect("shop.db") as db:
-        await db.execute("""CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY, 
+            balance INTEGER DEFAULT 0,
+            last_bonus TIMESTAMP
+        )""")
         await db.execute("""CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, item TEXT, price INTEGER, date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, item TEXT, code TEXT, status TEXT)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS promo_activations (user_id INTEGER PRIMARY KEY, promo_code TEXT, date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS promo_stats (promo_code TEXT PRIMARY KEY, uses INTEGER DEFAULT 0)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            item_name TEXT, 
+            item_data TEXT, 
+            is_sold INTEGER DEFAULT 0
+        )""")
         await db.commit()
 
 async def get_user(user_id):
     async with aiosqlite.connect("shop.db") as db:
-        async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
+        async with db.execute("SELECT balance, last_bonus FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
             if not row:
                 await db.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
                 await db.commit()
-                return 0
-            return row[0]
+                return 0, None
+            return row[0], row[1]
 
 async def add_balance(user_id, amount):
     await get_user(user_id)
@@ -96,18 +108,23 @@ async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
         print(f"⚠️ Ошибка отправки фото: {e}")
         await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
-# --- Главное меню ---
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    await get_user(message.from_user.id)
+# --- Функция формирования главного меню (чтобы не дублировать код) ---
+def get_main_menu_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
     kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
+    kb.button(text="🔄 Перезагрузить", callback_data="restart_bot") # <-- НОВАЯ КНОПКА
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
     kb.adjust(1)
+    return kb.as_markup()
+
+# --- Главное меню ---
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    await get_user(message.from_user.id)
     
     caption = (
         "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n"
@@ -115,12 +132,82 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "🚀 Быстро, выгодно и безопасно!\n\n"
         "💖 Мы очень рады видеть тебя здесь. Выбирай раздел и погнали:\n"
     )
-    await send_menu_with_photo(message.chat.id, caption, kb.as_markup())
+    await send_menu_with_photo(message.chat.id, caption, get_main_menu_kb())
     
     try:
         await bot.set_message_reaction(chat_id=message.chat.id, message_id=message.message_id, reaction=[types.ReactionTypeEmoji(emoji="❤️")])
     except Exception:
         pass
+
+# --- Обработчик кнопки Перезагрузки ---
+@dp.callback_query(F.data == "restart_bot")
+async def restart_bot(call: CallbackQuery, state: FSMContext):
+    await call.answer("🔄 Бот перезагружен!")
+    # Вызываем логику /start вручную, передавая сообщение
+    await cmd_start(call.message, state)
+
+# --- Профиль и Ежедневный Бонус ---
+@dp.callback_query(F.data == "menu_profile")
+async def show_profile(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    balance, last_bonus = await get_user(call.from_user.id)
+    history_text = ""
+    async with aiosqlite.connect("shop.db") as db:
+        async with db.execute("SELECT item, price FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 3", (call.from_user.id,)) as cursor:
+            rows = await cursor.fetchall()
+            history_text = "\n".join([f"• {item} — {price} ⭐" for item, price in rows]) if rows else "Покупок пока нет. 😉"
+            
+    bonus_available = True
+    if last_bonus:
+        last_dt = datetime.fromisoformat(last_bonus)
+        if datetime.now() - last_dt < timedelta(days=1):
+            bonus_available = False
+
+    kb_builder = InlineKeyboardBuilder()
+    kb_builder.button(text="💳 Пополнить баланс", callback_data="topup_start")
+    kb_builder.button(text="🎟 Ввести промокод", callback_data="enter_promo")
+    
+    if bonus_available:
+        kb_builder.button(text="🎁 Забрать бонус (+1 ⭐)", callback_data="claim_bonus")
+    else:
+        kb_builder.button(text="⏳ Бонус уже получен", callback_data="bonus_wait")
+        
+    kb_builder.button(text="🔙 Назад", callback_data="back_to_start")
+    kb_builder.adjust(1)
+    
+    text = (
+        f"👤 <b>Твой профиль</b>\n\n"
+        f"🆔 ID: <code>{call.from_user.id}</code>\n"
+        f"💰 Баланс звёзд: <b>{balance} ⭐</b>\n\n"
+        f"📜 <b>История покупок:</b>\n{history_text}\n\n"
+        f"<i>Баланс нужен для покупки юзернеймов!</i> 💖"
+    )
+    await send_menu_with_photo(call.message.chat.id, text, kb_builder.as_markup(), call.message.message_id)
+    await call.answer()
+
+@dp.callback_query(F.data == "claim_bonus")
+async def claim_bonus(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    balance, last_bonus = await get_user(user_id)
+    
+    if last_bonus:
+        last_dt = datetime.fromisoformat(last_bonus)
+        if datetime.now() - last_dt < timedelta(days=1):
+            await call.answer("⏳ Ты уже забирал бонус сегодня! Приходи завтра.", show_alert=True)
+            return
+            
+    now_str = datetime.now().isoformat()
+    async with aiosqlite.connect("shop.db") as db:
+        await db.execute("UPDATE users SET balance = balance + 1, last_bonus = ? WHERE user_id = ?", (now_str, user_id))
+        await db.commit()
+    
+    await add_history(user_id, "Ежедневный бонус", 1)
+    await call.answer("🎉 Ты получил 1 звезду! Приходи завтра снова.", show_alert=True)
+    await show_profile(call, state)
+
+@dp.callback_query(F.data == "bonus_wait")
+async def bonus_wait(call: CallbackQuery):
+    await call.answer("⏳ Бонус можно брать раз в 24 часа. Возвращайся позже!", show_alert=True)
 
 # --- Покупка звезд ---
 @dp.callback_query(F.data == "menu_buy")
@@ -159,9 +246,30 @@ async def process_stars_order(call: CallbackQuery):
     user_id = call.from_user.id
     username = call.from_user.username or "нет_юзернейма"
     code = generate_code()
+    item_name = f"{amount} звёзд"
     
     async with aiosqlite.connect("shop.db") as db:
-        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, f"{amount} звёзд", code, "pending"))
+        async with db.execute("SELECT id, item_data FROM stock WHERE item_name = ? AND is_sold = 0 LIMIT 1", (item_name,)) as cursor:
+            stock_item = await cursor.fetchone()
+            
+        if stock_item:
+            stock_id, item_data = stock_item
+            await db.execute("UPDATE stock SET is_sold = 1 WHERE id = ?", (stock_id,))
+            cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, item_name, code, "done"))
+            order_id = cursor.lastrowid
+            await db.commit()
+            
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_start")]])
+            text = (
+                f"🎉 <b>Заказ #{order_id} выполнен автоматически!</b>\n\n"
+                f"📦 Товар: {item_name}\n"
+                f"🔑 <b>Ваши данные:</b> <code>{item_data}</code>\n\n"
+                f"💖 Спасибо за покупку!"
+            )
+            await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
+            return
+            
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, item_name, code, "pending"))
         order_id = cursor.lastrowid
         await db.commit()
 
@@ -171,7 +279,7 @@ async def process_stars_order(call: CallbackQuery):
     
     text = (
         f"🎉 <b>Заказ #{order_id} создан!</b>\n\n"
-        f"📦 Товар: {amount} звёзд\n"
+        f"📦 Товар: {item_name}\n"
         f"💰 Сумма: 30₽\n"
         f"🔑 <b>Секретный код: <code>{code}</code></b>\n\n"
         f"👇 Напиши нашему менеджеру и отправь этот код:\n"
@@ -185,7 +293,7 @@ async def process_stars_order(call: CallbackQuery):
             [InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"),
              InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]
         ])
-        await bot.send_message(ADMIN_ID, f"🔔 <b>НОВЫЙ ЗАКАЗ ЗВЁЗД #{order_id}</b>\nКлиент: @{username}\nТовар: {amount} звёзд за 30₽\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
+        await bot.send_message(ADMIN_ID, f"🔔 <b>НОВЫЙ ЗАКАЗ #{order_id}</b>\nКлиент: @{username}\nТовар: {item_name}\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
 # --- Покупка Юзернеймов ---
@@ -223,7 +331,7 @@ async def process_uname_order(call: CallbackQuery):
     code = generate_code()
     price = USERNAMES_DB[uname]
     
-    balance = await get_user(user_id)
+    balance, _ = await get_user(user_id)
     if balance < price:
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 В профиль", callback_data="menu_profile")]])
         text = f"❌ <b>Недостаточно звёзд на балансе!</b>\n\nБаланс: {balance} ⭐. Нужно: {price} ⭐.\nПополни баланс в профиле! 🙏"
@@ -234,7 +342,27 @@ async def process_uname_order(call: CallbackQuery):
     await add_history(user_id, f"Юзернейм {uname}", price)
     
     async with aiosqlite.connect("shop.db") as db:
-        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, f"Юзернейм {uname}", code, "pending"))
+        async with db.execute("SELECT id, item_data FROM stock WHERE item_name = ? AND is_sold = 0 LIMIT 1", (uname,)) as cursor:
+            stock_item = await cursor.fetchone()
+
+        if stock_item:
+            stock_id, item_data = stock_item
+            await db.execute("UPDATE stock SET is_sold = 1 WHERE id = ?", (stock_id,))
+            cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, uname, code, "done"))
+            order_id = cursor.lastrowid
+            await db.commit()
+            
+            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_start")]])
+            text = (
+                f"🎉 <b>Заказ #{order_id} выполнен автоматически!</b>\n\n"
+                f"📦 Юзернейм: {uname}\n"
+                f"🔑 <b>Данные для входа/смены:</b> <code>{item_data}</code>\n\n"
+                f"✨ Поздравляем с покупкой!"
+            )
+            await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
+            return
+            
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, uname, code, "pending"))
         order_id = cursor.lastrowid
         await db.commit()
 
@@ -257,10 +385,10 @@ async def process_uname_order(call: CallbackQuery):
             [InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"),
              InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]
         ])
-        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ ЮЗЕРНЕЙМА #{order_id}</b>\nКлиент: @{username}\nТовар: {uname}\nСписано: {price} ⭐\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
+        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ ЮЗЕРНЕЙМА #{order_id}</b>\nКлиент: @{username}\nТовар: {uname}\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-# --- Кнопки админа ---
+# --- Кнопки админа (Заказы) ---
 @dp.callback_query(F.data.startswith("adm_done_"))
 async def admin_done(call: CallbackQuery):
     if call.from_user.username != ADMIN_USERNAME: 
@@ -305,33 +433,7 @@ async def admin_reject(call: CallbackQuery):
     await call.message.edit_text(f"{call.message.text}\n\n❌ <b>ОТКЛОНЕНО</b>", parse_mode="HTML")
     await call.answer("Клиенту отправлен отказ.")
 
-# --- Профиль и Промокод ---
-@dp.callback_query(F.data == "menu_profile")
-async def show_profile(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    balance = await get_user(call.from_user.id)
-    history_text = ""
-    async with aiosqlite.connect("shop.db") as db:
-        async with db.execute("SELECT item, price FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 3", (call.from_user.id,)) as cursor:
-            rows = await cursor.fetchall()
-            history_text = "\n".join([f"• {item} — {price} ⭐" for item, price in rows]) if rows else "Покупок пока нет. 😉"
-            
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="topup_start")],
-        [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="enter_promo")], 
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]
-    ])
-    
-    text = (
-        f"👤 <b>Твой профиль</b>\n\n"
-        f"🆔 ID: <code>{call.from_user.id}</code>\n"
-        f"💰 Баланс звёзд: <b>{balance} ⭐</b>\n\n"
-        f"📜 <b>История покупок:</b>\n{history_text}\n\n"
-        f"<i>Баланс нужен для покупки юзернеймов!</i> 💖"
-    )
-    await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
-    await call.answer()
-
+# --- Промокоды ---
 @dp.callback_query(F.data == "enter_promo")
 async def enter_promo(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_promo)
@@ -394,6 +496,7 @@ async def process_promo(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
+# --- Пополнение (Инвойсы) ---
 @dp.callback_query(F.data == "topup_start")
 async def topup_start(call: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -411,7 +514,7 @@ async def topup_start(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "cancel_topup")
 async def cancel_topup(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await show_profile(call)
+    await show_profile(call, state)
 
 @dp.message(UserStates.waiting_for_topup_amount)
 async def process_topup_amount(message: types.Message, state: FSMContext):
@@ -466,7 +569,44 @@ async def process_successful_payment(message: Message):
         await add_history(message.from_user.id, "Пополнение баланса", amount)
         await message.answer(f"✅ <b>Баланс пополнен на {topup} ⭐!</b>\nТеперь можешь купить юзернейм.", parse_mode="HTML")
 
-# --- Прием отзывов ---
+# --- АДМИН: РАССЫЛКА ---
+@dp.message(Command("send"))
+async def start_broadcast(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(UserStates.waiting_for_broadcast)
+    await message.answer("📢 <b>Режим рассылки.</b>\n\nОтправь мне текст сообщения, и я разошлю его всем пользователям бота.\nДля отмены введи /cancel.")
+
+@dp.message(UserStates.waiting_for_broadcast)
+async def do_broadcast(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    
+    if message.text == "/cancel":
+        await message.answer("❌ Рассылка отменена.")
+        return
+        
+    text_to_send = message.html_text
+    await message.answer("⏳ Начинаю рассылку...")
+    
+    async with aiosqlite.connect("shop.db") as db:
+        async with db.execute("SELECT user_id FROM users") as cursor:
+            users = await cursor.fetchall()
+            
+    success = 0
+    errors = 0
+    for (user_id,) in users:
+        try:
+            await bot.send_message(user_id, text_to_send, parse_mode="HTML")
+            success += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            errors += 1
+            
+    await message.answer(f"✅ <b>Рассылка завершена!</b>\nУспешно: {success}\nОшибок: {errors}")
+
+# --- Отзывы ---
 @dp.message(UserStates.waiting_for_review)
 async def process_review(message: types.Message, state: FSMContext):
     review_text = message.text
@@ -512,14 +652,7 @@ async def show_help(call: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "back_to_start")
 async def back_to_start(call: CallbackQuery, state: FSMContext):
     await state.clear() 
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
-    kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
-    kb.button(text="👤 Профиль", callback_data="menu_profile")
-    kb.button(text="📖 Помощь", callback_data="menu_help")
-    kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
-    kb.adjust(1)
-    await send_menu_with_photo(call.message.chat.id, "👋 <b>Главное меню Starsshop</b>\n\n👇 Выбирай нужный раздел:", kb.as_markup(), call.message.message_id)
+    await send_menu_with_photo(call.message.chat.id, "👋 <b>Главное меню Starsshop</b>\n\n👇 Выбирай нужный раздел:", get_main_menu_kb(), call.message.message_id)
     await call.answer()
 
 async def main():

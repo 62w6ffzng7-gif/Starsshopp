@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Бонусы, Рассылка, Автовыдача, Перезагрузка*
+# *Магазин Starsshop: Бонусы, Рассылка, Автовыдача, Меню с одной командой*
 
 import asyncio
 import logging
@@ -13,7 +13,7 @@ from flask import Flask
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, 
-                           LabeledPrice, PreCheckoutQuery, Message)
+                           LabeledPrice, PreCheckoutQuery, Message, BotCommand)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -108,19 +108,25 @@ async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
         print(f"⚠️ Ошибка отправки фото: {e}")
         await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
-# --- Функция формирования главного меню (чтобы не дублировать код) ---
+# --- Функция формирования главного меню (без кнопки перезагрузки) ---
 def get_main_menu_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить юзернейм", callback_data="menu_usernames")
     kb.button(text="👤 Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
-    kb.button(text="🔄 Перезагрузить", callback_data="restart_bot") # <-- НОВАЯ КНОПКА
     kb.button(text="📞 Связь с админом", url=f"https://t.me/{ADMIN_USERNAME}")
     kb.adjust(1)
     return kb.as_markup()
 
-# --- Главное меню ---
+# --- Установка нативного меню команд (ТОЛЬКО /start) ---
+async def set_commands():
+    commands = [
+        BotCommand(command="start", description="Открыть магазин")
+    ]
+    await bot.set_my_commands(commands)
+
+# --- Главное меню (/start) ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -138,13 +144,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await bot.set_message_reaction(chat_id=message.chat.id, message_id=message.message_id, reaction=[types.ReactionTypeEmoji(emoji="❤️")])
     except Exception:
         pass
-
-# --- Обработчик кнопки Перезагрузки ---
-@dp.callback_query(F.data == "restart_bot")
-async def restart_bot(call: CallbackQuery, state: FSMContext):
-    await call.answer("🔄 Бот перезагружен!")
-    # Вызываем логику /start вручную, передавая сообщение
-    await cmd_start(call.message, state)
 
 # --- Профиль и Ежедневный Бонус ---
 @dp.callback_query(F.data == "menu_profile")
@@ -657,6 +656,7 @@ async def back_to_start(call: CallbackQuery, state: FSMContext):
 
 async def main():
     await init_db()
+    await set_commands() # Устанавливаем команду /start при запуске
     threading.Thread(target=run_flask, daemon=True).start()
     print(f"[*] Starsshop запущен.")
     await dp.start_polling(bot)

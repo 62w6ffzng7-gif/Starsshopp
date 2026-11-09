@@ -1,6 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: финальная версия (Промокоды, Игры, Отмена, Отзывы)*
-# *зависимости: aiogram, aiosqlite, flask*
+# *Магазин Starsshop: финальная версия (Анимация игр, Отзывы, Промокоды)*
 
 import asyncio
 import logging
@@ -182,9 +181,9 @@ async def process_minigame_bet(message: types.Message, state: FSMContext):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔴", callback_data=f"mg_bet_red_{bet_amount}"),
-            InlineKeyboardButton(text="⚫", callback_data=f"mg_bet_black_{bet_amount}"),
-            InlineKeyboardButton(text="🟢", callback_data=f"mg_bet_green_{bet_amount}")
+            InlineKeyboardButton(text="🔴 Красный", callback_data=f"mg_bet_red_{bet_amount}"),
+            InlineKeyboardButton(text="⚫ Черный", callback_data=f"mg_bet_black_{bet_amount}"),
+            InlineKeyboardButton(text="🟢 Зеленый", callback_data=f"mg_bet_green_{bet_amount}")
         ],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_minigames")]
     ])
@@ -211,7 +210,15 @@ async def play_color_game(call: CallbackQuery):
         await call.answer("🚫 Недостаточно звезд!", show_alert=True)
         return
 
-    # Логика игры
+    # 1. Анимация "Крутим"
+    await call.message.edit_caption(
+        caption=f"🎲 <b>Крутим рулетку...</b>\n\nТвоя ставка: <b>{bet_amount} ⭐</b>\nОжидай результат... ⏳",
+        parse_mode="HTML",
+        reply_markup=None # Убираем кнопки, чтобы не нажимали повторно
+    )
+    await asyncio.sleep(2) # Пауза для эффекта
+
+    # 2. Логика игры
     win = False
     if lose_streak > 0:
         win = False
@@ -234,13 +241,16 @@ async def play_color_game(call: CallbackQuery):
     else:
         winning_color = random.choice([c for c in ["red", "black", "green"] if c != chosen_color])
 
+    color_ru = {"red": "🔴 КРАСНЫЙ", "black": "⚫ ЧЕРНЫЙ", "green": "🟢 ЗЕЛЕНЫЙ"}
+
+    # 3. Подсчет баланса и результат
     if win:
         payout = bet_amount * 2
-        await add_balance(user_id, bet_amount)
-        result_text = f"🎉 <b>ПОБЕДА!</b> Выпал {winning_color.upper()}. Ты выиграл <b>{payout} ⭐</b>!"
+        await add_balance(user_id, bet_amount) # Чистая прибавка (ставка возвращается + выигрыш)
+        result_text = f"🎉 <b>ПОБЕДА!</b> Выпал {color_ru[winning_color]}. Ты выиграл <b>{payout} ⭐</b>!"
     else:
         await add_balance(user_id, -bet_amount)
-        result_text = f"😢 <b>ПРОИГРЫШ.</b> Выпал {winning_color.upper()}. Ты потерял <b>{bet_amount} ⭐</b>."
+        result_text = f"😢 <b>ПРОИГРЫШ.</b> Выпал {color_ru[winning_color]}. Ты потерял <b>{bet_amount} ⭐</b>."
         
     await update_game_stats(user_id, win_streak, lose_streak)
     new_balance, _, _ = await get_user(user_id)
@@ -250,9 +260,10 @@ async def play_color_game(call: CallbackQuery):
         [InlineKeyboardButton(text="🔙 В меню", callback_data="menu_minigames")]
     ])
     
-    text = f"{result_text}\n\n💰 Новый баланс: <b>{new_balance} ⭐</b>"
+    final_text = f"{result_text}\n\n💰 Новый баланс: <b>{new_balance} ⭐</b>"
     
-    await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
+    # 4. Отправляем результат с картинкой
+    await send_menu_with_photo(call.message.chat.id, final_text, kb, call.message.message_id)
     await call.answer("Результат на экране!")
 
 # --- Покупка звезд ---
@@ -599,7 +610,7 @@ async def process_successful_payment(message: Message):
         await add_history(message.from_user.id, "Пополнение баланса", amount)
         await message.answer(f"✅ <b>Баланс пополнен на {topup} ⭐!</b>\nТеперь можешь купить юзернейм или сыграть в мини-игры.", parse_mode="HTML")
 
-# --- Прием отзывов ---
+# --- Прием отзывов (ИСПРАВЛЕНО) ---
 @dp.message(UserStates.waiting_for_review)
 async def process_review(message: types.Message, state: FSMContext):
     review_text = message.text
@@ -622,16 +633,11 @@ async def process_review(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-# ИСПРАВЛЕНИЕ: Отзывы ловятся, только если это не промокод и не команды
-@dp.message(F.text & ~F.text.startswith("/") & ~F.text.startswith("STARTOP2026"))
+# ВАЖНО: этот хэндлер ловит текст ТОЛЬКО если стейт - waiting_for_review
+@dp.message(F.text & ~F.text.startswith("/"))
 async def catch_reviews(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
-    # Если пользователь в процессе игры или ввода суммы, не перехватываем это как отзыв
-    if current_state in [UserStates.waiting_for_minigame_bet, UserStates.waiting_for_topup_amount, UserStates.waiting_for_promo]:
-        return
-        
-    if current_state is None:
-        await state.set_state(UserStates.waiting_for_review)
+    if current_state == UserStates.waiting_for_review.state:
         await process_review(message, state)
 
 # --- Помощь и Навигация ---

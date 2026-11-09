@@ -41,7 +41,7 @@ class UserStates(StatesGroup):
 
 app = Flask(__name__)
 @app.route('/')
-def health(): return "Starsshop is running", 200
+def health(): return "Starsshop is running ✨", 200
 def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
 # --- БД ---
@@ -83,12 +83,15 @@ async def add_history(user_id, item, price):
 def generate_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# --- Отправка меню с картинкой ---
+# --- Универсальная отправка меню с картинкой ---
 async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
     try:
         if message_id:
-            try: await bot.delete_message(chat_id, message_id)
-            except: pass
+            try: 
+                await bot.delete_message(chat_id, message_id)
+            except: 
+                pass
+        
         await bot.send_photo(
             chat_id=chat_id,
             photo=IMAGE_URL,
@@ -97,7 +100,7 @@ async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
             parse_mode="HTML"
         )
     except Exception as e:
-        print(f"Ошибка отправки фото: {e}")
+        print(f"⚠️ Ошибка отправки фото: {e}")
         await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 # --- Главное меню ---
@@ -177,12 +180,15 @@ async def process_minigame_bet(message: types.Message, state: FSMContext):
         
     await state.clear()
     
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🔴 Красный (x2)", callback_data=f"mg_bet_red_{bet_amount}")
-    kb.button(text="⚫ Черный (x2)", callback_data=f"mg_bet_black_{bet_amount}")
-    kb.button(text="🟢 Зеленый (x2)", callback_data=f"mg_bet_green_{bet_amount}")
-    kb.button(text="❌ Отмена", callback_data="menu_minigames")
-    kb.adjust(3, 1)
+    # ИСПРАВЛЕНИЕ: Сделали кнопки компактными, чтобы они влезали в один ряд
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔴", callback_data=f"mg_bet_red_{bet_amount}"),
+            InlineKeyboardButton(text="⚫", callback_data=f"mg_bet_black_{bet_amount}"),
+            InlineKeyboardButton(text="🟢", callback_data=f"mg_bet_green_{bet_amount}")
+        ],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_minigames")]
+    ])
     
     text = (
         f"🎨 <b>Выбери цвет</b>\n\n"
@@ -192,7 +198,7 @@ async def process_minigame_bet(message: types.Message, state: FSMContext):
         f"🟢 Зеленый — x2\n\n"
         f"Удачи! 🍀"
     )
-    await send_menu_with_photo(message.chat.id, text, kb.as_markup())
+    await send_menu_with_photo(message.chat.id, text, kb)
     await message.answer("👇 Нажми на кнопку с цветом или Отмена!")
 
 @dp.callback_query(F.data.startswith("mg_bet_"))
@@ -206,6 +212,7 @@ async def play_color_game(call: CallbackQuery):
         await call.answer("🚫 Недостаточно звезд!", show_alert=True)
         return
 
+    # Логика игры
     win = False
     if lose_streak > 0:
         win = False
@@ -245,6 +252,8 @@ async def play_color_game(call: CallbackQuery):
     ])
     
     text = f"{result_text}\n\n💰 Новый баланс: <b>{new_balance} ⭐</b>"
+    
+    # ИСПРАВЛЕНИЕ: Удаляем сообщение с игрой и отправляем результат с картинкой
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer("Результат на экране!")
 
@@ -546,7 +555,6 @@ async def process_topup_amount(message: types.Message, state: FSMContext):
         
     amount = int(message.text)
     
-    # Если сумма меньше 25, мы НЕ выходим из состояния, а просим ввести заново
     if amount < 25 or amount > 1000:
         return await message.answer("❌ Минимальное пополнение — 25 звёзд, максимальное — 1000. Введи другое число:")
     

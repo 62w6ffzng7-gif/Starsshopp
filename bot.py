@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Бонусы, Рассылка, Автовыдача, Меню с одной командой*
+# *Магазин Starsshop: Бонусы, Рассылка, Автовыдача, БЕЗ ИГР*
 
 import asyncio
 import logging
@@ -108,7 +108,7 @@ async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
         print(f"⚠️ Ошибка отправки фото: {e}")
         await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
-# --- Функция формирования главного меню (без кнопки перезагрузки) ---
+# --- Функция формирования главного меню ---
 def get_main_menu_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить звёзды", callback_data="menu_buy")
@@ -632,34 +632,4 @@ async def process_review(message: types.Message, state: FSMContext):
 async def catch_reviews(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state == UserStates.waiting_for_review.state:
-        await process_review(message, state)
-
-# --- Помощь и Навигация ---
-@dp.callback_query(F.data == "menu_help")
-async def show_help(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    text = (
-        "📖 <b>Как это работает?</b>\n\n"
-        "🌟 <b>Покупка звёзд:</b> Выбираешь пакет (15 звёзд = 30₽). Бот дает код. Пишешь менеджеру, переводишь рубли, получаешь звёзды.\n\n"
-        "👑 <b>Покупка юзернеймов:</b> Нужны звёзды на балансе. Если их нет, сначала пополняешь баланс (в профиле). Потом покупаешь ник за звёзды и получаешь код для менеджера.\n\n"
-        f"💬 <b>Менеджер:</b> @{ADMIN_USERNAME}"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Админ", url=f"https://t.me/{ADMIN_USERNAME}")], [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]])
-    await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
-    await call.answer()
-
-@dp.callback_query(F.data == "back_to_start")
-async def back_to_start(call: CallbackQuery, state: FSMContext):
-    await state.clear() 
-    await send_menu_with_photo(call.message.chat.id, "👋 <b>Главное меню Starsshop</b>\n\n👇 Выбирай нужный раздел:", get_main_menu_kb(), call.message.message_id)
-    await call.answer()
-
-async def main():
-    await init_db()
-    await set_commands() # Устанавливаем команду /start при запуске
-    threading.Thread(target=run_flask, daemon=True).start()
-    print(f"[*] Starsshop запущен.")
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        await process

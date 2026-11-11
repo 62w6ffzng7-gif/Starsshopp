@@ -33,6 +33,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Оставили только нужные состояния (игры удалены)
 class UserStates(StatesGroup):
     waiting_for_topup_amount = State()
     waiting_for_review = State()
@@ -47,6 +48,7 @@ def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 # --- БД ---
 async def init_db():
     async with aiosqlite.connect("shop.db") as db:
+        # Убрали win_streak и lose_streak
         await db.execute("""CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, 
             balance INTEGER DEFAULT 0,
@@ -119,7 +121,7 @@ def get_main_menu_kb():
     kb.adjust(1)
     return kb.as_markup()
 
-# --- Установка нативного меню команд (ТОЛЬКО /start) ---
+# --- Установка нативного меню команд ---
 async def set_commands():
     commands = [
         BotCommand(command="start", description="Открыть магазин")
@@ -632,4 +634,34 @@ async def process_review(message: types.Message, state: FSMContext):
 async def catch_reviews(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state == UserStates.waiting_for_review.state:
-        await process
+        await process_review(message, state)
+
+# --- Помощь и Навигация ---
+@dp.callback_query(F.data == "menu_help")
+async def show_help(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text = (
+        "📖 <b>Как это работает?</b>\n\n"
+        "🌟 <b>Покупка звёзд:</b> Выбираешь пакет (15 звёзд = 30₽). Бот дает код. Пишешь менеджеру, переводишь рубли, получаешь звёзды.\n\n"
+        "👑 <b>Покупка юзернеймов:</b> Нужны звёзды на балансе. Если их нет, сначала пополняешь баланс (в профиле). Потом покупаешь ник за звёзды и получаешь код для менеджера.\n\n"
+        f"💬 <b>Менеджер:</b> @{ADMIN_USERNAME}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Админ", url=f"https://t.me/{ADMIN_USERNAME}")], [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_start")]])
+    await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
+    await call.answer()
+
+@dp.callback_query(F.data == "back_to_start")
+async def back_to_start(call: CallbackQuery, state: FSMContext):
+    await state.clear() 
+    await send_menu_with_photo(call.message.chat.id, "👋 <b>Главное меню Starsshop</b>\n\n👇 Выбирай нужный раздел:", get_main_menu_kb(), call.message.message_id)
+    await call.answer()
+
+async def main():
+    await init_db()
+    await set_commands()
+    threading.Thread(target=run_flask, daemon=True).start()
+    print(f"[*] Starsshop запущен.")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())

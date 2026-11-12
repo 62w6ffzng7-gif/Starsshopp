@@ -225,7 +225,7 @@ async def claim_bonus(call: CallbackQuery, state: FSMContext):
 async def bonus_wait(call: CallbackQuery):
     await call.answer("⏳ Приходи завтра!", show_alert=True)
 
-# --- Покупка звезд (ДОБАВЛЕН ВЫБОР ОПЛАТЫ) ---
+# --- Покупка звезд ---
 @dp.callback_query(F.data == "menu_buy")
 async def buy_stars_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -251,7 +251,7 @@ async def choose_payment_method(call: CallbackQuery, state: FSMContext):
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
-# --- Оплата РУБЛЯМИ (как было) ---
+# --- Оплата РУБЛЯМИ ---
 @dp.callback_query(F.data.startswith("pay_rub_"))
 async def pay_with_rub(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
@@ -285,13 +285,12 @@ async def pay_with_rub(call: CallbackQuery):
         await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ (РУБЛИ) #{order_id}</b>\nКлиент: @{username}\nТовар: {amount} звёзд\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-# --- Оплата КРИПТОЙ (CryptoBot) ---
+# --- Оплата КРИПТОЙ ---
 @dp.callback_query(F.data.startswith("pay_crypto_"))
 async def pay_with_crypto(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
     user_id = call.from_user.id
     
-    # Курс: 1 звезда = ~0.023$ (примерно, меняй под свой)
     usdt_amount = round(amount * 0.023, 2)
     
     await call.message.edit_caption(caption="⏳ <b>Создаем счет в CryptoBot...</b>", parse_mode="HTML")
@@ -303,9 +302,11 @@ async def pay_with_crypto(call: CallbackQuery):
         await call.message.answer("❌ Ошибка создания счета. Попробуйте позже.")
         return
 
+    # ДОБАВЛЕНА КНОПКА ОТМЕНЫ
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🪙 Перейти к оплате", url=pay_url)],
-        [InlineKeyboardButton(text="🔄 Я оплатил (Проверить)", callback_data=f"check_crypto_{invoice_id}_{amount}_{user_id}")]
+        [InlineKeyboardButton(text="🔄 Я оплатил (Проверить)", callback_data=f"check_crypto_{invoice_id}_{amount}_{user_id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_buy")]
     ])
     
     text = (
@@ -386,7 +387,7 @@ async def admin_reject(call: CallbackQuery):
     await call.message.edit_text(f"{call.message.text}\n\n❌ ОТКЛОНЕНО", parse_mode="HTML")
     await call.answer()
 
-# --- Остальное (без изменений) ---
+# --- Покупка юзернеймов ---
 @dp.callback_query(F.data == "menu_usernames")
 async def show_usernames(call: CallbackQuery, state: FSMContext):
     await state.clear()

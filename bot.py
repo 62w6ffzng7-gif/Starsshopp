@@ -1,6 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Финальная версия + Оплата Криптой (CryptoBot)*
-# *зависимости: aiogram, aiosqlite, flask, aiohttp*
+# *Магазин Starsshop: Финальная версия + Оплата Криптой (CryptoBot) + Новая цена*
 
 import asyncio
 import logging
@@ -225,12 +224,13 @@ async def claim_bonus(call: CallbackQuery, state: FSMContext):
 async def bonus_wait(call: CallbackQuery):
     await call.answer("⏳ Приходи завтра!", show_alert=True)
 
-# --- Покупка звезд ---
+# --- Покупка звезд (ИЗМЕНЕНА ЦЕНА) ---
 @dp.callback_query(F.data == "menu_buy")
 async def buy_stars_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardBuilder()
-    kb.button(text="🌟 15 звёзд — 30₽ / ~0.35$", callback_data="select_stars_15")
+    # В меню показываем 30₽ (базовая цена)
+    kb.button(text="🌟 15 звёзд — 30₽", callback_data="select_stars_15")
     kb.button(text="🔙 Назад", callback_data="back_to_start")
     kb.adjust(1)
     text = "🛒 <b>Выбери пакет звёзд:</b>\n\n🌟 Оплата доступна в рублях (карта/СБП) или в криптовалюте (USDT)."
@@ -243,21 +243,24 @@ async def choose_payment_method(call: CallbackQuery, state: FSMContext):
     amount = int(call.data.split("_")[2])
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇷🇺 Оплатить рублями", callback_data=f"pay_rub_{amount}")],
-        [InlineKeyboardButton(text="🪙 Оплатить криптой (USDT)", callback_data=f"pay_crypto_{amount}")],
+        [InlineKeyboardButton(text="🇷🇺 Оплатить рублями (30₽)", callback_data=f"pay_rub_{amount}")],
+        [InlineKeyboardButton(text="🪙 Оплатить криптой (~33₽)", callback_data=f"pay_crypto_{amount}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_buy")]
     ])
     text = f"💳 <b>Как вы хотите купить {amount} звёзд?</b>\n\nВыберите удобный способ оплаты:"
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
-# --- Оплата РУБЛЯМИ ---
+# --- Оплата РУБЛЯМИ (Цена 30₽) ---
 @dp.callback_query(F.data.startswith("pay_rub_"))
 async def pay_with_rub(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
     user_id = call.from_user.id
     username = call.from_user.username or "нет_юзернейма"
     code = generate_code()
+    
+    # Фиксированная цена 30₽ за 15 звезд
+    price_rub = 30 if amount == 15 else amount * 2
     
     async with aiosqlite.connect("shop.db") as db:
         cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, f"{amount} звёзд (Рубли)", code, "pending"))
@@ -270,7 +273,7 @@ async def pay_with_rub(call: CallbackQuery):
     text = (
         f"🎉 <b>Заказ #{order_id} создан!</b>\n\n"
         f"📦 Товар: {amount} звёзд\n"
-        f"💰 Оплата: Рубли (СБП/Карта)\n"
+        f"💰 Оплата: <b>{price_rub}₽</b> (СБП/Карта)\n"
         f"🔑 <b>Код заказа: <code>{code}</code></b>\n\n"
         f"👇 Напиши менеджеру и отправь этот код для оплаты:\n"
         f"<b>@{ADMIN_USERNAME}</b>"
@@ -282,16 +285,21 @@ async def pay_with_rub(call: CallbackQuery):
             [InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"),
              InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]
         ])
-        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ (РУБЛИ) #{order_id}</b>\nКлиент: @{username}\nТовар: {amount} звёзд\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
+        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ (РУБЛИ) #{order_id}</b>\nКлиент: @{username}\nТовар: {amount} звёзд\nК оплате: {price_rub}₽\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-# --- Оплата КРИПТОЙ ---
+# --- Оплата КРИПТОЙ (Цена эквивалентна 33₽) ---
 @dp.callback_query(F.data.startswith("pay_crypto_"))
 async def pay_with_crypto(call: CallbackQuery):
     amount = int(call.data.split("_")[2])
     user_id = call.from_user.id
     
-    usdt_amount = round(amount * 0.023, 2)
+    # В крипте берем цену в USDT, эквивалентную 33 рублям.
+    # Курс USDT ~ 90 рублей. 33 / 90 = 0.36 USDT.
+    if amount == 15:
+        usdt_amount = 0.36
+    else:
+        usdt_amount = round((amount * 2.2) / 90, 2) 
     
     await call.message.edit_caption(caption="⏳ <b>Создаем счет в CryptoBot...</b>", parse_mode="HTML")
     
@@ -302,7 +310,6 @@ async def pay_with_crypto(call: CallbackQuery):
         await call.message.answer("❌ Ошибка создания счета. Попробуйте позже.")
         return
 
-    # ДОБАВЛЕНА КНОПКА ОТМЕНЫ
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🪙 Перейти к оплате", url=pay_url)],
         [InlineKeyboardButton(text="🔄 Я оплатил (Проверить)", callback_data=f"check_crypto_{invoice_id}_{amount}_{user_id}")],
@@ -313,6 +320,7 @@ async def pay_with_crypto(call: CallbackQuery):
         f"🪙 <b>Счет на оплату создан!</b>\n\n"
         f"К оплате: <b>{usdt_amount} USDT</b>\n"
         f"Товар: <b>{amount} звёзд</b>\n\n"
+        f"<i>(Цена в крипте немного выше из-за комиссии сети)</i>\n\n"
         f"1. Нажми «Перейти к оплате»\n"
         f"2. Оплати в CryptoBot\n"
         f"3. Вернись и нажми «Я оплатил»"

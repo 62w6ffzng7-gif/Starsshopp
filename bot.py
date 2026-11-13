@@ -367,7 +367,7 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
 async def enter_promo(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_promo)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="menu_profile")]])
-    await send_menu_with_photo(call.message.chat.id, "🎟 <b>Введи промокод в чат:</b>\n\nНапример: STARTOP2026", kb, call.message.message_id)
+    await send_menu_with_photo(call.message.chat.id, "🎟 <b>Введи промокод в чат:</b>", kb, call.message.message_id)
     await call.answer()
 
 @dp.message(UserStates.waiting_for_promo)

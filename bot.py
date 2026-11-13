@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Мини-игры (Краш, Монетка), Реферальная система, Оплата криптой*
+# *Магазин Starsshop: Финальная версия (Рабочий Краш, Монетка, Оплата, Рефералка)*
 
 import asyncio
 import logging
@@ -24,12 +24,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "9040235874:AAGSGvWV-nwd4kn32OADEn0ob_zp_M8tH
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ADMIN_USERNAME = "moscow_1488"
 IMAGE_URL = "https://github.com/62w6ffzng7-gif/Starsshopp/raw/main/IMG_1577.jpeg"
+
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "314128:AA3GvM6yWgMQqrM8y1hwjf2Lv6w9MXvOReo") 
 CRYPTO_API_URL = "https://pay.crypt.bot/api"
 BOT_USERNAME = "Starsshop337_bot"
 
 USERNAMES_DB = {"@ynqnw5": 50}
-
 # ==============================
 
 logging.basicConfig(level=logging.INFO)
@@ -41,9 +41,9 @@ class UserStates(StatesGroup):
     waiting_for_review = State()
     waiting_for_promo = State()
     waiting_for_broadcast = State()
+    # Игры
     waiting_for_bet_crash = State()
     waiting_for_bet_coin = State()
-    waiting_for_coin_choice = State()
 
 app = Flask(__name__)
 @app.route('/')
@@ -92,21 +92,22 @@ async def add_history(user_id, item, price):
 
 def generate_code(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# --- Универсальная отправка ---
+# --- Отправка меню с картинкой ---
 async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
     try:
         if message_id:
             try: await bot.delete_message(chat_id, message_id)
             except: pass
         await bot.send_photo(chat_id=chat_id, photo=IMAGE_URL, caption=text, reply_markup=keyboard, parse_mode="HTML")
-    except:
+    except Exception as e:
+        print(f"Ошибка фото: {e}")
         await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 def get_main_menu_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🌟 Купить Звёзды", callback_data="menu_buy")
     kb.button(text="👑 Купить Юзернейм", callback_data="menu_usernames")
-    kb.button(text="🎮 Мини-Игры", callback_data="menu_games") # Новая вкладка
+    kb.button(text="🎮 Мини-Игры", callback_data="menu_games")
     kb.button(text="👥 Реферальная Система", callback_data="menu_ref_system") 
     kb.button(text="👤 Мой Профиль", callback_data="menu_profile")
     kb.button(text="📖 Помощь", callback_data="menu_help")
@@ -156,12 +157,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         except: pass
 
     await get_user(user_id)
-    caption = (
-        "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n"
-        "💎 Здесь ты можешь купить звёзды за рубли/крипту или крутые юзернеймы за баланс.\n"
-        "🚀 Быстро, выгодно и безопасно!\n\n"
-        "💖 Мы очень рады видеть тебя здесь. Выбирай раздел и погнали:\n"
-    )
+    caption = "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n💎 Здесь ты можешь купить звёзды или юзернеймы.\n🚀 Быстро, выгодно и безопасно!"
     await send_menu_with_photo(message.chat.id, caption, get_main_menu_kb())
 
 # --- Вкладка МИНИ-ИГРЫ ---
@@ -173,10 +169,10 @@ async def show_games(call: CallbackQuery, state: FSMContext):
     text = (
         "🎮 <b>Добро пожаловать в Мини-Игры!</b> 🎰\n\n"
         f"💰 Твой баланс: <b>{balance} ⭐</b>\n\n"
-        "🔥 Здесь ты можешь испытать удачу и приумножить свои звёзды!\n\n"
+        "🔥 Здесь ты можешь испытать удачу!\n\n"
         "👇 <b>Доступные игры:</b>\n"
-        "🚀 <b>Краш</b> — Множитель растет, успей забрать!\n"
-        "🪙 <b>Монетка</b> — Орел или Решка, удвой ставку!\n\n"
+        "🚀 <b>Краш</b> — Множитель растет, успей забрать! (от 5 ⭐)\n"
+        "🪙 <b>Монетка</b> — Орел или Решка, удвой ставку! (от 10 ⭐)\n\n"
         "Выбирай игру и испытывай фортуну! 🍀"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -205,7 +201,7 @@ async def crash_start(call: CallbackQuery, state: FSMContext):
 @dp.message(UserStates.waiting_for_bet_crash)
 async def crash_process_bet(message: types.Message, state: FSMContext):
     if not message.text.isdigit():
-        return await message.answer("❌ <b>Ошибка!</b> Введи число (цифрами).")
+        return await message.answer("❌ <b>Ошибка!</b> Введи число.")
     bet = int(message.text)
     if bet < 5 or bet > 50:
         return await message.answer("❌ <b>Ошибка!</b> Ставка должна быть от 5 до 50 ⭐.")
@@ -213,47 +209,56 @@ async def crash_process_bet(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     balance, _, _, win_streak = await get_user(user_id)
     if balance < bet:
-        return await message.answer("❌ <b>Ошибка!</b> Недостаточно звезд на балансе.")
+        return await message.answer("❌ <b>Ошибка!</b> Недостаточно звезд.")
     
     await state.clear()
     await add_balance(user_id, -bet) # Списываем ставку
     
-    # --- ПОДКРУТКА (Анти-чит) ---
-    # Если выиграл 2 раза подряд, следующий краш лопается почти сразу (на x1.1)
+    # --- ПОДКРУТКА И ШАНСЫ ---
+    # Шанс на высокий множитель очень низкий. 
+    # Если win_streak >= 2 (выиграл 2 раза подряд), краш лопается моментально (x1.1)
     if win_streak >= 2:
         crash_point = random.uniform(1.1, 1.2)
-        await update_win_streak(user_id, 0) # Сбрасываем серию
+        await update_win_streak(user_id, 0) 
     else:
-        # Базовый шанс: ракета может лопнуть от 1.1 до 5.0
-        crash_point = random.uniform(1.1, 5.0)
-    
-    # Запускаем анимацию и игру
+        # Генерируем случайное число от 0 до 1
+        r = random.random()
+        if r < 0.50: crash_point = random.uniform(1.1, 1.5)   # 50% шанс лопнуть рано
+        elif r < 0.80: crash_point = random.uniform(1.5, 2.5) # 30% шанс дожить до x2.5
+        elif r < 0.95: crash_point = random.uniform(2.5, 4.0) # 15% шанс дожить до x4
+        else: crash_point = random.uniform(4.0, 10.0)         # 5% шанс на х10 (редкость)
+
+    # Запускаем анимацию
     msg = await message.answer(f"🚀 <b>Ракета взлетает!</b>\nМножитель: <b>x1.0</b>")
     await asyncio.sleep(1)
     
     current_multiplier = 1.0
+    is_crashed = False
+    
     while current_multiplier < crash_point:
-        current_multiplier += 0.2
+        current_multiplier += 0.1 # Шаг анимации
         if current_multiplier >= crash_point:
+            is_crashed = True
             break
         
-        # Обновляем сообщение (имитация полета)
+        # Обновляем кнопку, чтобы игрок мог забрать
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"💰 Забрать x{current_multiplier:.1f}", callback_data=f"crash_cashout_{bet}_{current_multiplier:.1f}")]])
         try:
             await msg.edit_text(f"🚀 <b>Ракета летит!</b>\nМножитель: <b>x{current_multiplier:.1f}</b>\n\n<i>Успей забрать!</i>", reply_markup=kb, parse_mode="HTML")
         except: pass
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.6) # Скорость полета
     
-    # Если не успел забрать (лопнула)
-    try:
-        await msg.edit_text(
-            f"💥 <b>БУМ! Ракета взорвалась на x{crash_point:.1f}</b>\n\n"
-            f"😢 Ты потерял <b>{bet} ⭐</b>.\n\n"
-            "Не расстраивайся, попробуй еще раз! 🍀",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 В Игры", callback_data="menu_games")]]),
-            parse_mode="HTML"
-        )
-    except: pass
+    # Если ракета взорвалась до того, как игрок нажал кнопку
+    if is_crashed:
+        try:
+            await msg.edit_text(
+                f"💥 <b>БУМ! Ракета взорвалась на x{crash_point:.1f}</b>\n\n"
+                f"😢 Ты потерял <b>{bet} ⭐</b>.\n\n"
+                "Не расстраивайся, попробуй еще раз! 🍀",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 В Игры", callback_data="menu_games")]]),
+                parse_mode="HTML"
+            )
+        except: pass
 
 @dp.callback_query(F.data.startswith("crash_cashout_"))
 async def crash_cashout(call: CallbackQuery, state: FSMContext):
@@ -264,10 +269,10 @@ async def crash_cashout(call: CallbackQuery, state: FSMContext):
     win_amount = int(bet * mult)
     profit = win_amount - bet
     
-    await add_balance(call.from_user.id, win_amount) # Возвращаем ставку + выигрыш
+    await add_balance(call.from_user.id, win_amount) 
     await add_history(call.from_user.id, "Выигрыш в Краш", win_amount)
     
-    # Увеличиваем счетчик побед для подкрутки
+    # Записываем победу для системы подкрутки
     _, _, _, win_streak = await get_user(call.from_user.id)
     await update_win_streak(call.from_user.id, win_streak + 1)
     
@@ -279,7 +284,12 @@ async def crash_cashout(call: CallbackQuery, state: FSMContext):
         "Отличная реакция! 🎉"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Играть Еще", callback_data="game_crash")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="menu_games")]])
-    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    
+    # Редактируем сообщение с результатом
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except:
+        pass
     await call.answer("💸 Деньги зачислены!")
 
 # ==========================================
@@ -290,7 +300,7 @@ async def coin_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_bet_coin)
     text = (
         "🪙 <b>Монетка</b>\n\n"
-        "Введи сумму ставки в звёздах (от 5 до 50):\n\n"
+        "Введи сумму ставки в звёздах (от 10 до 100):\n\n"
         "<i>Угадай сторону монетки и умножь ставку в 2 раза!</i> 💰"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="menu_games")]])
@@ -302,8 +312,8 @@ async def coin_process_bet(message: types.Message, state: FSMContext):
     if not message.text.isdigit():
         return await message.answer("❌ <b>Ошибка!</b> Введи число.")
     bet = int(message.text)
-    if bet < 5 or bet > 50:
-        return await message.answer("❌ <b>Ошибка!</b> Ставка от 5 до 50 ⭐.")
+    if bet < 10 or bet > 100:
+        return await message.answer("❌ <b>Ошибка!</b> Ставка от 10 до 100 ⭐.")
     
     user_id = message.from_user.id
     balance, _, _, _ = await get_user(user_id)
@@ -325,7 +335,7 @@ async def coin_process_bet(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("coin_choice_"))
 async def coin_play(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    bet = data.get('bet', 5)
+    bet = data.get('bet', 10)
     choice = call.data.split("_")[2] # eagle или tails
     user_id = call.from_user.id
     
@@ -337,16 +347,19 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await add_balance(user_id, -bet) # Списываем ставку
     
-    await call.message.edit_text("🪙 <b>Монетка подбрасывается...</b> ⏳", parse_mode="HTML")
-    await asyncio.sleep(2) # Анимация полета
+    # Анимация подбрасывания
+    msg = await call.message.edit_text("🪙 <b>Монетка подбрасывается...</b> ⏳", parse_mode="HTML")
+    await asyncio.sleep(1)
+    await call.message.edit_text("🪙 <b>Летит...</b> 🌀", parse_mode="HTML")
+    await asyncio.sleep(1)
     
-    # --- ПОДКРУТКА (Анти-чит) ---
-    # Базовый шанс победы 45%. Если выиграл 2 раза подряд - принудительный проигрыш.
+    # --- ПОДКРУТКА ---
+    # Базовый шанс победы 45%. Если выиграл 2 раза подряд - проигрыш.
     if win_streak >= 2:
         win = False
         await update_win_streak(user_id, 0)
     else:
-        win = random.random() < 0.45 # 45% шанс на победу
+        win = random.random() < 0.45 
     
     result_side = choice if win else ("tails" if choice == "eagle" else "eagle")
     side_name = "🦅 Орел" if result_side == "eagle" else "🪙 Решка"
@@ -363,7 +376,6 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
             f"💰 Ты выиграл <b>{win_amount} ⭐</b> (x2)!\n\n"
             "Фортуна на твоей стороне! 🍀"
         )
-        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🪙 Играть Еще", callback_data="game_coin")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="menu_games")]]), parse_mode="HTML")
     else:
         text = (
             f"😢 <b>ПРОИГРЫШ</b>\n\n"
@@ -371,11 +383,13 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
             f"Ты потерял <b>{bet} ⭐</b>.\n\n"
             "Не везет? Попробуй еще раз, удача любит настойчивых! 💪"
         )
-        await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🪙 Играть Еще", callback_data="game_coin")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="menu_games")]]), parse_mode="HTML")
+        
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🪙 Играть Еще", callback_data="game_coin")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="menu_games")]])
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await call.answer()
 
 # ==========================================
-# --- ОСТАЛЬНОЙ ФУНКЦИОНАЛ (Без изменений) ---
+# --- ОСТАЛЬНОЙ ФУНКЦИОНАЛ ---
 # ==========================================
 
 @dp.callback_query(F.data == "menu_ref_system")

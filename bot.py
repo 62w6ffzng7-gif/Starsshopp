@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Финальная версия (Исправлены уведомления, Монетка, Тексты)*
+# *Магазин Starsshop: Финальная версия (Исправлены промокоды, убраны лишние ники)*
 
 import asyncio
 import logging
@@ -20,9 +20,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ========== НАСТРОЙКИ ==========
-# ВАЖНО: Замените на свои реальные данные
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9040235874:AAGSGvWV-nwd4kn32OADEn0ob_zp_M8tHKw")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) # Твой числовой ID (узнать у @userinfobot)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) 
 ADMIN_USERNAME = "moscow_1488"
 IMAGE_URL = "https://github.com/62w6ffzng7-gif/Starsshopp/raw/main/IMG_1577.jpeg"
 
@@ -30,14 +29,11 @@ CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "314128:AA3GvM6yWgMQqrM8y1hwjf2
 CRYPTO_API_URL = "https://pay.crypt.bot/api"
 BOT_USERNAME = "Starsshop337_bot"
 
-# Список юзернеймов на продажу
+# Оставил только твой юзернейм
 USERNAMES_DB = {
-    "@ynqnw5": 25,
-    "@cryptoking": 50,
-    "@star_lord": 100
+    "@ynqnw5": 25
 }
 
-# Список промокодов (максимум 25 звезд)
 PROMOCODES = {
     "STARTOP2026": 15,
     "NEWYEAR2026": 25,
@@ -57,7 +53,6 @@ class UserStates(StatesGroup):
     waiting_for_review = State()
     waiting_for_promo = State()
     waiting_for_broadcast = State()
-    # Игры
     waiting_for_bet_crash = State()
     waiting_for_bet_coin = State()
 
@@ -66,7 +61,6 @@ app = Flask(__name__)
 def health(): return "Starsshop is running ✨", 200
 def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
-# Хранилище активных игр для защиты от двойного клика
 active_crash_messages = set()
 
 # --- БД ---
@@ -110,7 +104,6 @@ async def add_history(user_id, item, price):
 
 def generate_code(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# --- Универсальная отправка меню с картинкой ---
 async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
     try:
         if message_id:
@@ -135,7 +128,6 @@ def get_main_menu_kb():
 
 async def set_commands(): await bot.set_my_commands([BotCommand(command="start", description="Открыть магазин")])
 
-# --- CryptoBot ---
 async def create_crypto_invoice(amount_usdt: float, description: str, payload: str):
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
     data = {"asset": "USDT", "amount": str(amount_usdt), "description": description, "payload": payload}
@@ -154,7 +146,6 @@ async def check_crypto_invoice(invoice_id: int):
                 return result["result"]["items"][0]["status"] == "paid"
     return False
 
-# --- Главное меню ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -183,9 +174,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
     await send_menu_with_photo(message.chat.id, caption, get_main_menu_kb())
 
-# ==========================================
-# --- ВКЛАДКА МИНИ-ИГРЫ ---
-# ==========================================
+# --- ИГРЫ ---
 @dp.callback_query(F.data == "btn_games")
 async def show_games(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -207,17 +196,10 @@ async def show_games(call: CallbackQuery, state: FSMContext):
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
-# ==========================================
-# --- ИГРА 1: КРАШ (CRASH) ---
-# ==========================================
 @dp.callback_query(F.data == "game_crash_start")
 async def crash_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_bet_crash)
-    text = (
-        "🚀 <b>Краш (Crash)</b>\n\n"
-        "Введи сумму ставки в звёздах (от 5 до 50):\n\n"
-        "<i>Максимальный множитель — x3.0. Успей забрать!</i> 💥"
-    )
+    text = "🚀 <b>Краш</b>\n\nВведи сумму ставки в звёздах (от 5 до 50):\n\n<i>Максимальный множитель — x3.0. Успей забрать!</i> 💥"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="nav_games")]])
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
@@ -233,30 +215,23 @@ async def crash_bet(message: types.Message, state: FSMContext):
     if balance < bet: return await message.answer(f"❌ <b>Ошибка!</b> Недостаточно звезд на балансе. У тебя {balance} ⭐.")
     
     await state.clear()
-    await add_balance(user_id, -bet) # Списываем ставку
+    await add_balance(user_id, -bet)
     
-    # Чистый рандом: Ракета лопается от 1.1 до 3.0
     crash_point = round(random.uniform(1.1, 3.0), 1)
-
     msg = await message.answer(f"🚀 <b>Ракета взлетает!</b>\nМножитель: <b>x1.0</b>")
     active_crash_messages.add(msg.message_id)
     await asyncio.sleep(1)
     
     current_multiplier = 1.0
-    
     while current_multiplier < crash_point:
-        # Если кнопка "Забрать" была нажата, останавливаем цикл
         if msg.message_id not in active_crash_messages: return
-
         current_multiplier += 0.1
         if current_multiplier >= crash_point: break
-        
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"💰 Забрать x{current_multiplier:.1f}", callback_data=f"crash_take_{bet}_{current_multiplier:.1f}_{msg.message_id}")]])
         try: await msg.edit_text(f"🚀 <b>Ракета летит!</b>\nМножитель: <b>x{current_multiplier:.1f}</b>\n\n<i>Успей забрать!</i>", reply_markup=kb, parse_mode="HTML")
         except: pass
         await asyncio.sleep(0.6)
     
-    # Если ракета лопнула
     if msg.message_id in active_crash_messages:
         active_crash_messages.remove(msg.message_id)
         try: await msg.edit_text(f"💥 <b>БУМ! Ракета взорвалась на x{crash_point:.1f}</b>\n\n😢 Ты потерял <b>{bet} ⭐</b>.\n\nНе расстраивайся, попробуй еще раз! 🍀", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]]), parse_mode="HTML")
@@ -266,34 +241,22 @@ async def crash_bet(message: types.Message, state: FSMContext):
 async def crash_take(call: CallbackQuery):
     _, _, bet_str, mult_str, msg_id_str = call.data.split("_")
     bet, mult, msg_id = int(bet_str), float(mult_str), int(msg_id_str)
-    
     if msg_id not in active_crash_messages: return await call.answer("❌ Эта игра уже завершена!", show_alert=True)
-    active_crash_messages.remove(msg_id) # Мгновенно останавливаем
+    active_crash_messages.remove(msg_id)
     
     win_amount = int(bet * mult)
     profit = win_amount - bet
-    
     await add_balance(call.from_user.id, win_amount) 
     await add_history(call.from_user.id, "Выигрыш в Краш", win_amount)
     
-    text = (
-        f"💰 <b>Ты успел забрать!</b>\n\n"
-        f"Множитель: <b>x{mult:.1f}</b>\n"
-        f"Твой выигрыш: <b>{win_amount} ⭐</b>\n"
-        f"Чистая прибыль: <b>+{profit} ⭐</b>\n\n"
-        "Отличная реакция! 🎉"
-    )
+    text = f"💰 <b>Ты успел забрать!</b>\n\nМножитель: <b>x{mult:.1f}</b>\nТвой выигрыш: <b>{win_amount} ⭐</b>\nЧистая прибыль: <b>+{profit} ⭐</b>\n\nОтличная реакция! 🎉"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Играть Еще", callback_data="game_crash_start")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]])
-    
     try:
         await call.message.delete()
         await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
     except: pass
     await call.answer("💸 Деньги зачислены!")
 
-# ==========================================
-# --- ИГРА 2: МОНЕТКА (ИСПРАВЛЕНА) ---
-# ==========================================
 @dp.callback_query(F.data == "game_coin_start")
 async def coin_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_bet_coin)
@@ -312,7 +275,6 @@ async def coin_bet(message: types.Message, state: FSMContext):
     balance, _, _, _ = await get_user(user_id)
     if balance < bet: return await message.answer(f"❌ <b>Ошибка!</b> Недостаточно звезд.")
     
-    # Передаем ставку прямо в кнопки, чтобы не было багов с FSM
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🦅 Орел", callback_data=f"coin_side_eagle_{bet}")],
         [InlineKeyboardButton(text="🪙 Решка", callback_data=f"coin_side_tails_{bet}")],
@@ -324,7 +286,6 @@ async def coin_bet(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("coin_side_"))
 async def coin_play(call: CallbackQuery, state: FSMContext):
-    # Достаем данные из кнопки
     _, _, choice, bet_str = call.data.split("_")
     bet = int(bet_str)
     user_id = call.from_user.id
@@ -333,14 +294,13 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
     if balance < bet: return await call.answer("❌ Недостаточно звезд!", show_alert=True)
     
     await state.clear()
-    await add_balance(user_id, -bet) # Списываем
+    await add_balance(user_id, -bet)
     
     msg = await call.message.edit_text("🪙 <b>Монетка подбрасывается...</b> ⏳", parse_mode="HTML")
     await asyncio.sleep(1)
     await call.message.edit_text("🪙 <b>Летит...</b> 🌀", parse_mode="HTML")
     await asyncio.sleep(1)
     
-    # Подкрутка: если выиграл 2 раза подряд - проигрыш. Базовый шанс 45%.
     if win_streak >= 2:
         win = False
         await update_win_streak(user_id, 0)
@@ -363,17 +323,10 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await call.answer()
 
-# ==========================================
-# --- ПОПОЛНЕНИЕ (С УВЕДОМЛЕНИЕМ АДМИНУ) ---
-# ==========================================
 @dp.callback_query(F.data == "btn_topup")
 async def topup_start(call: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="btn_profile")]])
-    text = (
-        "💳 <b>Пополнение баланса</b>\n\n"
-        "Напиши в чат, сколько звезд ты хочешь купить (от 1 до 10000):\n\n"
-        "<i>Счет придет от официального Telegram.</i>"
-    )
+    text = "💳 <b>Пополнение баланса</b>\n\nНапиши в чат, сколько звезд ты хочешь купить (от 1 до 10000):"
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await state.set_state(UserStates.waiting_for_topup_amount)
     await call.answer()
@@ -416,7 +369,6 @@ async def success_pay(message: Message):
         await add_balance(user_id, amount)
         await add_history(user_id, f"Пополнение на {amount} ⭐", amount)
         
-        # Уведомление пользователю
         await message.answer(
             f"✅ <b>Успех! Баланс пополнен на {amount} ⭐</b>\n\n"
             "Спасибо за покупку! Теперь вы можете потратить их в играх или на юзернеймы.",
@@ -424,7 +376,6 @@ async def success_pay(message: Message):
             parse_mode="HTML"
         )
         
-        # УВЕДОМЛЕНИЕ АДМИНУ
         if ADMIN_ID != 0:
             try:
                 await bot.send_message(
@@ -439,10 +390,12 @@ async def success_pay(message: Message):
                 print(f"Не удалось отправить уведомление админу: {e}")
 
 # ==========================================
-# --- ПРОМОКОДЫ ---
+# --- ПРОМОКОДЫ (ПОЛНОСТЬЮ ИСПРАВЛЕНО) ---
 # ==========================================
 @dp.callback_query(F.data == "btn_promo")
 async def promo_start(call: CallbackQuery, state: FSMContext):
+    # Обязательно очищаем стейт перед установкой нового
+    await state.clear() 
     await state.set_state(UserStates.waiting_for_promo)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="btn_profile")]])
     text = "🎟 <b>Активация промокода</b>\n\nОтправь мне промокод в чат, и я начислю тебе бонусные звезды! ✨"
@@ -458,9 +411,10 @@ async def process_promo(message: types.Message, state: FSMContext):
         await state.clear()
         return await message.answer("❌ Отменено.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В Профиль", callback_data="btn_profile")]]))
 
+    # Проверка на существование кода
     if code not in PROMOCODES:
         await message.answer("❌ <b>Ошибка! Такого промокода не существует.</b> 😢")
-        await state.clear()
+        await state.clear() # Сбрасываем, чтобы не спамил
         return
         
     bonus_amount = PROMOCODES[code]
@@ -486,9 +440,6 @@ async def process_promo(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-# ==========================================
-# --- ПРОФИЛЬ И РЕФЕРАЛКА ---
-# ==========================================
 @dp.callback_query(F.data == "btn_ref")
 async def ref_system(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -570,9 +521,6 @@ async def claim_bonus(call: CallbackQuery, state: FSMContext):
 async def bonus_wait(call: CallbackQuery):
     await call.answer("❌ Ошибка! Бонус можно брать раз в 24 часа.", show_alert=True)
 
-# ==========================================
-# --- МАГАЗИН (ЗВЕЗДЫ И НИКИ) ---
-# ==========================================
 @dp.callback_query(F.data == "btn_buy_stars")
 async def buy_stars(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -580,10 +528,7 @@ async def buy_stars(call: CallbackQuery, state: FSMContext):
     kb.button(text="🌟 15 Звёзд — 30₽", callback_data="pay_select_15")
     kb.button(text="🔙 Назад", callback_data="nav_back_main")
     kb.adjust(1)
-    text = (
-        "🛒 <b>Пакет звёзд:</b>\n\n"
-        "🌟 Выбери удобный способ оплаты. Все операции моментальные!"
-    )
+    text = "🛒 <b>Пакет звёзд:</b>\n\n🌟 Выбери удобный способ оплаты. Все операции моментальные!"
     await send_menu_with_photo(call.message.chat.id, text, kb.as_markup(), call.message.message_id)
     await call.answer()
 
@@ -602,7 +547,6 @@ async def pay_rub(call: CallbackQuery):
     code = generate_code()
     price_rub = 30
     
-    # Реферальный бонус
     _, _, referrer_id, _ = await get_user(user_id)
     if referrer_id:
         await add_balance(referrer_id, 1)
@@ -615,17 +559,9 @@ async def pay_rub(call: CallbackQuery):
         await db.commit()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Написать Менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]])
-    text = (
-        f"✅ <b>Успех! Заказ #{order_id} создан!</b>\n\n"
-        f"📦 Товар: 15 звёзд\n"
-        f"💰 К оплате: <b>{price_rub}₽</b>\n"
-        f"🔑 Код заказа: <code>{code}</code>\n\n"
-        f"👇 Напиши менеджеру и отправь этот код:\n"
-        f"<b>@{ADMIN_USERNAME}</b>"
-    )
+    text = f"✅ <b>Успех! Заказ #{order_id} создан!</b>\n\n📦 Товар: 15 звёзд\n💰 К оплате: <b>{price_rub}₽</b>\n🔑 Код заказа: <code>{code}</code>\n\n👇 Напиши менеджеру и отправь этот код:\n<b>@{ADMIN_USERNAME}</b>"
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     if ADMIN_ID != 0:
         kb_admin = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"), InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]])
         await bot.send_message(ADMIN_ID, f"🔔 <b>НОВЫЙ ЗАКАЗ (РУБЛИ) #{order_id}</b>\n\n👤 Клиент: @{username}\n🆔 ID: <code>{user_id}</code>\n📦 Товар: 15 звёзд\n💰 К оплате: {price_rub}₽\n🔑 Код: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
@@ -656,6 +592,7 @@ async def check_crypto(call: CallbackQuery):
 async def show_unames(call: CallbackQuery, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardBuilder()
+    # Тут теперь только один твой ник
     for uname, price in USERNAMES_DB.items():
         kb.button(text=f"👑 {uname} — {price} ⭐", callback_data=f"uname_sel_{uname}")
     kb.button(text="🔙 Назад", callback_data="nav_back_main")
@@ -699,9 +636,6 @@ async def buy_uname(call: CallbackQuery):
         await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ ЮЗЕРНЕЙМА #{order_id}</b>\nКлиент: @{username}\nТовар: {uname}\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
-# ==========================================
-# --- НАВИГАЦИЯ И ПОМОЩЬ ---
-# ==========================================
 @dp.callback_query(F.data == "btn_help")
 async def help_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -728,9 +662,6 @@ async def back_games(call: CallbackQuery, state: FSMContext):
     await state.clear() 
     await show_games(call, state)
 
-# ==========================================
-# --- АДМИНКА (Скрытая) ---
-# ==========================================
 @dp.callback_query(F.data.startswith("adm_done_"))
 async def admin_done(call: CallbackQuery):
     if call.from_user.username != ADMIN_USERNAME: return await call.answer("Нет прав", show_alert=True)

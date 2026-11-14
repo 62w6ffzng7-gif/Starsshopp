@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Полная версия. Все кнопки уникальны.*
+# *Магазин Starsshop: Финальная версия (Исправлены уведомления, Монетка, Тексты)*
 
 import asyncio
 import logging
@@ -20,8 +20,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ========== НАСТРОЙКИ ==========
+# ВАЖНО: Замените на свои реальные данные
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9040235874:AAGSGvWV-nwd4kn32OADEn0ob_zp_M8tHKw")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) # Твой числовой ID (узнать у @userinfobot)
 ADMIN_USERNAME = "moscow_1488"
 IMAGE_URL = "https://github.com/62w6ffzng7-gif/Starsshopp/raw/main/IMG_1577.jpeg"
 
@@ -29,8 +30,14 @@ CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "314128:AA3GvM6yWgMQqrM8y1hwjf2
 CRYPTO_API_URL = "https://pay.crypt.bot/api"
 BOT_USERNAME = "Starsshop337_bot"
 
-USERNAMES_DB = {"@ynqnw5": 25}
+# Список юзернеймов на продажу
+USERNAMES_DB = {
+    "@ynqnw5": 25,
+    "@cryptoking": 50,
+    "@star_lord": 100
+}
 
+# Список промокодов (максимум 25 звезд)
 PROMOCODES = {
     "STARTOP2026": 15,
     "NEWYEAR2026": 25,
@@ -50,6 +57,7 @@ class UserStates(StatesGroup):
     waiting_for_review = State()
     waiting_for_promo = State()
     waiting_for_broadcast = State()
+    # Игры
     waiting_for_bet_crash = State()
     waiting_for_bet_coin = State()
 
@@ -58,6 +66,7 @@ app = Flask(__name__)
 def health(): return "Starsshop is running ✨", 200
 def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
+# Хранилище активных игр для защиты от двойного клика
 active_crash_messages = set()
 
 # --- БД ---
@@ -101,7 +110,7 @@ async def add_history(user_id, item, price):
 
 def generate_code(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-# --- Отправка меню с картинкой ---
+# --- Универсальная отправка меню с картинкой ---
 async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
     try:
         if message_id:
@@ -166,67 +175,91 @@ async def cmd_start(message: types.Message, state: FSMContext):
         except: pass
 
     await get_user(user_id)
-    caption = "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n💎 Здесь ты можешь купить звёзды или юзернеймы.\n🚀 Быстро, выгодно и безопасно!"
+    caption = (
+        "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n"
+        "💎 Здесь ты можешь купить звёзды по выгодному курсу или приобрести эксклюзивные юзернеймы.\n"
+        "🚀 Все операции проводятся моментально и безопасно!\n\n"
+        "👇 Выбирай нужный раздел и начинай:"
+    )
     await send_menu_with_photo(message.chat.id, caption, get_main_menu_kb())
 
-# --- ИГРЫ ---
+# ==========================================
+# --- ВКЛАДКА МИНИ-ИГРЫ ---
+# ==========================================
 @dp.callback_query(F.data == "btn_games")
 async def show_games(call: CallbackQuery, state: FSMContext):
     await state.clear()
     balance, _, _, _ = await get_user(call.from_user.id)
     text = (
-        "🎮 <b>Мини-Игры</b> 🎰\n\n"
-        f"💰 Твой баланс: <b>{balance} ⭐</b>\n\n"
-        "🚀 <b>Краш</b> — Множитель до x3.0! (от 5 ⭐)\n"
-        "🪙 <b>Монетка</b> — Орел/Решка, x2! (от 10 ⭐)"
+        "🎮 <b>Добро пожаловать в Мини-Игры!</b> 🎰\n\n"
+        f"💰 Твой текущий баланс: <b>{balance} ⭐</b>\n\n"
+        "🔥 Здесь ты можешь испытать настоящую удачу и приумножить свои звёзды!\n\n"
+        "👇 <b>Доступные игры:</b>\n"
+        "🚀 <b>Краш</b> — Ракета летит, множитель растет. Успей забрать до взрыва! (от 5 ⭐)\n"
+        "🪙 <b>Монетка</b> — Орел или Решка. Угадай сторону и умножь ставку в 2 раза! (от 10 ⭐)\n\n"
+        "Выбирай игру и испытывай фортуну! 🍀"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Краш", callback_data="game_crash_start")],
-        [InlineKeyboardButton(text="🪙 Монетка", callback_data="game_coin_start")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="nav_back_main")]
+        [InlineKeyboardButton(text="🚀 Играть в Краш", callback_data="game_crash_start")],
+        [InlineKeyboardButton(text="🪙 Играть в Монетку", callback_data="game_coin_start")],
+        [InlineKeyboardButton(text="🔙 Назад в Меню", callback_data="nav_back_main")]
     ])
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
+# ==========================================
+# --- ИГРА 1: КРАШ (CRASH) ---
+# ==========================================
 @dp.callback_query(F.data == "game_crash_start")
 async def crash_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_bet_crash)
-    text = "🚀 <b>Краш</b>\n\nВведи сумму ставки (от 5 до 50):"
+    text = (
+        "🚀 <b>Краш (Crash)</b>\n\n"
+        "Введи сумму ставки в звёздах (от 5 до 50):\n\n"
+        "<i>Максимальный множитель — x3.0. Успей забрать!</i> 💥"
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="nav_games")]])
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
 @dp.message(UserStates.waiting_for_bet_crash)
 async def crash_bet(message: types.Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("❌ Введи число.")
+    if not message.text.isdigit(): return await message.answer("❌ <b>Ошибка!</b> Введи число (цифрами).")
     bet = int(message.text)
-    if bet < 5 or bet > 50: return await message.answer("❌ Ставка от 5 до 50 ⭐.")
+    if bet < 5 or bet > 50: return await message.answer("❌ <b>Ошибка!</b> Ставка должна быть от 5 до 50 ⭐.")
     
     user_id = message.from_user.id
     balance, _, _, _ = await get_user(user_id)
-    if balance < bet: return await message.answer("❌ Недостаточно звезд.")
+    if balance < bet: return await message.answer(f"❌ <b>Ошибка!</b> Недостаточно звезд на балансе. У тебя {balance} ⭐.")
     
     await state.clear()
-    await add_balance(user_id, -bet)
+    await add_balance(user_id, -bet) # Списываем ставку
     
+    # Чистый рандом: Ракета лопается от 1.1 до 3.0
     crash_point = round(random.uniform(1.1, 3.0), 1)
+
     msg = await message.answer(f"🚀 <b>Ракета взлетает!</b>\nМножитель: <b>x1.0</b>")
     active_crash_messages.add(msg.message_id)
     await asyncio.sleep(1)
     
     current_multiplier = 1.0
+    
     while current_multiplier < crash_point:
+        # Если кнопка "Забрать" была нажата, останавливаем цикл
         if msg.message_id not in active_crash_messages: return
+
         current_multiplier += 0.1
         if current_multiplier >= crash_point: break
+        
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"💰 Забрать x{current_multiplier:.1f}", callback_data=f"crash_take_{bet}_{current_multiplier:.1f}_{msg.message_id}")]])
-        try: await msg.edit_text(f"🚀 <b>Летит!</b>\nМножитель: <b>x{current_multiplier:.1f}</b>", reply_markup=kb, parse_mode="HTML")
+        try: await msg.edit_text(f"🚀 <b>Ракета летит!</b>\nМножитель: <b>x{current_multiplier:.1f}</b>\n\n<i>Успей забрать!</i>", reply_markup=kb, parse_mode="HTML")
         except: pass
         await asyncio.sleep(0.6)
     
+    # Если ракета лопнула
     if msg.message_id in active_crash_messages:
         active_crash_messages.remove(msg.message_id)
-        try: await msg.edit_text(f"💥 <b>БУМ! x{crash_point:.1f}</b>\n😢 Потеряно <b>{bet} ⭐</b>.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]]), parse_mode="HTML")
+        try: await msg.edit_text(f"💥 <b>БУМ! Ракета взорвалась на x{crash_point:.1f}</b>\n\n😢 Ты потерял <b>{bet} ⭐</b>.\n\nНе расстраивайся, попробуй еще раз! 🍀", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]]), parse_mode="HTML")
         except: pass
 
 @dp.callback_query(F.data.startswith("crash_take_"))
@@ -234,72 +267,80 @@ async def crash_take(call: CallbackQuery):
     _, _, bet_str, mult_str, msg_id_str = call.data.split("_")
     bet, mult, msg_id = int(bet_str), float(mult_str), int(msg_id_str)
     
-    if msg_id not in active_crash_messages: return await call.answer("❌ Игра завершена!", show_alert=True)
-    active_crash_messages.remove(msg_id)
+    if msg_id not in active_crash_messages: return await call.answer("❌ Эта игра уже завершена!", show_alert=True)
+    active_crash_messages.remove(msg_id) # Мгновенно останавливаем
     
     win_amount = int(bet * mult)
-    await add_balance(call.from_user.id, win_amount) 
-    await add_history(call.from_user.id, "Краш", win_amount)
+    profit = win_amount - bet
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Еще", callback_data="game_crash_start")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]])
+    await add_balance(call.from_user.id, win_amount) 
+    await add_history(call.from_user.id, "Выигрыш в Краш", win_amount)
+    
+    text = (
+        f"💰 <b>Ты успел забрать!</b>\n\n"
+        f"Множитель: <b>x{mult:.1f}</b>\n"
+        f"Твой выигрыш: <b>{win_amount} ⭐</b>\n"
+        f"Чистая прибыль: <b>+{profit} ⭐</b>\n\n"
+        "Отличная реакция! 🎉"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Играть Еще", callback_data="game_crash_start")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]])
+    
     try:
         await call.message.delete()
-        await call.message.answer(f"💰 <b>Забрал на x{mult:.1f}!</b>\nВыигрыш: <b>{win_amount} ⭐</b>.", reply_markup=kb, parse_mode="HTML")
+        await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
     except: pass
-    await call.answer("💸 Зачислено!")
+    await call.answer("💸 Деньги зачислены!")
 
+# ==========================================
+# --- ИГРА 2: МОНЕТКА (ИСПРАВЛЕНА) ---
+# ==========================================
 @dp.callback_query(F.data == "game_coin_start")
 async def coin_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_bet_coin)
-    text = "🪙 <b>Монетка</b>\n\nВведи сумму ставки (от 10 до 100):"
+    text = "🪙 <b>Монетка</b>\n\nВведи сумму ставки в звёздах (от 10 до 100):\n\n<i>Угадай сторону и умножь ставку в 2 раза!</i> 💰"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="nav_games")]])
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
 @dp.message(UserStates.waiting_for_bet_coin)
 async def coin_bet(message: types.Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("❌ Введи число.")
+    if not message.text.isdigit(): return await message.answer("❌ <b>Ошибка!</b> Введи число.")
     bet = int(message.text)
-    if bet < 10 or bet > 100: return await message.answer("❌ Ставка от 10 до 100 ⭐.")
+    if bet < 10 or bet > 100: return await message.answer("❌ <b>Ошибка!</b> Ставка от 10 до 100 ⭐.")
     
     user_id = message.from_user.id
     balance, _, _, _ = await get_user(user_id)
-    if balance < bet: return await message.answer("❌ Недостаточно звезд.")
+    if balance < bet: return await message.answer(f"❌ <b>Ошибка!</b> Недостаточно звезд.")
     
-    await state.update_data(coin_bet=bet)
-    
+    # Передаем ставку прямо в кнопки, чтобы не было багов с FSM
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🦅 Орел", callback_data="coin_side_eagle")],
-        [InlineKeyboardButton(text="🪙 Решка", callback_data="coin_side_tails")],
+        [InlineKeyboardButton(text="🦅 Орел", callback_data=f"coin_side_eagle_{bet}")],
+        [InlineKeyboardButton(text="🪙 Решка", callback_data=f"coin_side_tails_{bet}")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="nav_games")]
     ])
-    text = f"💸 Ставка: <b>{bet} ⭐</b>\n\nВыбери сторону:"
+    text = f"💸 Твоя ставка: <b>{bet} ⭐</b>\n\nВыбери сторону монетки:"
     await send_menu_with_photo(message.chat.id, text, kb)
     await message.answer("👇 Жми на кнопку!")
 
 @dp.callback_query(F.data.startswith("coin_side_"))
 async def coin_play(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    bet = data.get('coin_bet', 0)
-    
-    if bet <= 0:
-        await state.clear()
-        return await call.answer("❌ Ошибка! Начните заново.", show_alert=True)
-        
-    choice = call.data.split("_")[2]
+    # Достаем данные из кнопки
+    _, _, choice, bet_str = call.data.split("_")
+    bet = int(bet_str)
     user_id = call.from_user.id
     
     balance, _, _, win_streak = await get_user(user_id)
     if balance < bet: return await call.answer("❌ Недостаточно звезд!", show_alert=True)
     
     await state.clear()
-    await add_balance(user_id, -bet)
+    await add_balance(user_id, -bet) # Списываем
     
-    msg = await call.message.edit_text("🪙 <b>Подбрасываем...</b> ⏳", parse_mode="HTML")
+    msg = await call.message.edit_text("🪙 <b>Монетка подбрасывается...</b> ⏳", parse_mode="HTML")
     await asyncio.sleep(1)
     await call.message.edit_text("🪙 <b>Летит...</b> 🌀", parse_mode="HTML")
     await asyncio.sleep(1)
     
+    # Подкрутка: если выиграл 2 раза подряд - проигрыш. Базовый шанс 45%.
     if win_streak >= 2:
         win = False
         await update_win_streak(user_id, 0)
@@ -312,28 +353,35 @@ async def coin_play(call: CallbackQuery, state: FSMContext):
     if win:
         win_amount = bet * 2
         await add_balance(user_id, win_amount)
-        await add_history(user_id, "Монетка", win_amount)
+        await add_history(user_id, "Выигрыш в Монетку", win_amount)
         await update_win_streak(user_id, win_streak + 1)
-        text = f"🎉 <b>ПОБЕДА!</b>\n\nВыпало: {side_name}\n💰 Выигрыш: <b>{win_amount} ⭐</b>!"
+        text = f"🎉 <b>ПОБЕДА!</b>\n\nВыпало: {side_name}\n💰 Ты выиграл <b>{win_amount} ⭐</b> (x2)!\n\nФортуна на твоей стороне! 🍀"
     else:
-        text = f"😢 <b>ПРОИГРЫШ</b>\n\nВыпало: {side_name}\nПотеряно: <b>{bet} ⭐</b>."
+        text = f"😢 <b>ПРОИГРЫШ</b>\n\nВыпало: {side_name}\nТы потерял <b>{bet} ⭐</b>.\n\nНе везет? Попробуй еще раз, удача любит настойчивых! 💪"
         
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🪙 Еще", callback_data="game_coin_start")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🪙 Играть Еще", callback_data="game_coin_start")], [InlineKeyboardButton(text="🎮 В Игры", callback_data="nav_games")]])
     await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await call.answer()
 
-# --- ПОПОЛНЕНИЕ ---
+# ==========================================
+# --- ПОПОЛНЕНИЕ (С УВЕДОМЛЕНИЕМ АДМИНУ) ---
+# ==========================================
 @dp.callback_query(F.data == "btn_topup")
 async def topup_start(call: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="btn_profile")]])
-    await send_menu_with_photo(call.message.chat.id, "💳 <b>Пополнение</b>\nНапиши сколько звезд купить (от 1 до 10000):", kb, call.message.message_id)
+    text = (
+        "💳 <b>Пополнение баланса</b>\n\n"
+        "Напиши в чат, сколько звезд ты хочешь купить (от 1 до 10000):\n\n"
+        "<i>Счет придет от официального Telegram.</i>"
+    )
+    await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await state.set_state(UserStates.waiting_for_topup_amount)
     await call.answer()
 
 @dp.message(UserStates.waiting_for_topup_amount)
 async def process_topup(message: types.Message, state: FSMContext):
     if not message.text.isdigit() or not (1 <= int(message.text) <= 10000):
-        return await message.answer("❌ Введи число от 1 до 10000.")
+        return await message.answer("❌ <b>Ошибка!</b> Введи число от 1 до 10000.")
     
     amount = int(message.text)
     await state.clear()
@@ -343,15 +391,15 @@ async def process_topup(message: types.Message, state: FSMContext):
         await bot.send_invoice(
             chat_id=message.from_user.id,
             title=f"Пополнение на {amount} ⭐",
-            description=f"Зачисление {amount} звезд.",
+            description=f"Зачисление {amount} звезд на ваш внутренний баланс.",
             payload=f"topup_{amount}",
             provider_token="", 
             currency="XTR", 
             prices=prices
         )
-        await message.answer("☝️ Выше выставлен счет. Оплатите его.")
+        await message.answer("☝️ Выше выставлен счет. Оплатите его, чтобы зачислить звезды.")
     except Exception as e:
-        await message.answer(f"❌ <b>Ошибка:</b>\n<code>{e}</code>")
+        await message.answer(f"❌ <b>Ошибка выставления счета:</b>\n<code>{e}</code>")
 
 @dp.pre_checkout_query()
 async def pre_checkout(pre_checkout_q: PreCheckoutQuery):
@@ -363,16 +411,42 @@ async def success_pay(message: Message):
     if payload.startswith("topup_"):
         amount = int(payload.split("_")[1])
         user_id = message.from_user.id
+        username = message.from_user.username or "нет_юзернейма"
+        
         await add_balance(user_id, amount)
-        await add_history(user_id, f"Пополнение", amount)
-        await message.answer(f"✅ <b>Баланс пополнен на {amount} ⭐</b>", parse_mode="HTML")
+        await add_history(user_id, f"Пополнение на {amount} ⭐", amount)
+        
+        # Уведомление пользователю
+        await message.answer(
+            f"✅ <b>Успех! Баланс пополнен на {amount} ⭐</b>\n\n"
+            "Спасибо за покупку! Теперь вы можете потратить их в играх или на юзернеймы.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👤 В Профиль", callback_data="btn_profile")]]),
+            parse_mode="HTML"
+        )
+        
+        # УВЕДОМЛЕНИЕ АДМИНУ
+        if ADMIN_ID != 0:
+            try:
+                await bot.send_message(
+                    ADMIN_ID, 
+                    f"🔔 <b>НОВОЕ ПОПОЛНЕНИЕ БАЛАНСА!</b>\n\n"
+                    f"👤 Клиент: @{username} (ID: <code>{user_id}</code>)\n"
+                    f"💰 Сумма: <b>{amount} ⭐</b>\n\n"
+                    f"<i>Звезды успешно зачислены на баланс бота.</i>",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"Не удалось отправить уведомление админу: {e}")
 
+# ==========================================
 # --- ПРОМОКОДЫ ---
+# ==========================================
 @dp.callback_query(F.data == "btn_promo")
 async def promo_start(call: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_promo)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="btn_profile")]])
-    await send_menu_with_photo(call.message.chat.id, "🎟 <b>Введи промокод:</b>", kb, call.message.message_id)
+    text = "🎟 <b>Активация промокода</b>\n\nОтправь мне промокод в чат, и я начислю тебе бонусные звезды! ✨"
+    await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
 @dp.message(UserStates.waiting_for_promo)
@@ -385,7 +459,7 @@ async def process_promo(message: types.Message, state: FSMContext):
         return await message.answer("❌ Отменено.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В Профиль", callback_data="btn_profile")]]))
 
     if code not in PROMOCODES:
-        await message.answer("❌ <b>Неверный промокод.</b>")
+        await message.answer("❌ <b>Ошибка! Такого промокода не существует.</b> 😢")
         await state.clear()
         return
         
@@ -394,7 +468,7 @@ async def process_promo(message: types.Message, state: FSMContext):
     async with aiosqlite.connect("shop.db") as db:
         async with db.execute("SELECT user_id FROM promo_activations WHERE user_id = ? AND promo_code = ?", (user_id, code)) as cursor:
             if await cursor.fetchone():
-                await message.answer("❌ <b>Вы уже активировали этот код.</b>")
+                await message.answer("❌ <b>Ошибка! Ты уже активировал этот код.</b> 🙅‍♂️")
                 await state.clear()
                 return
         await db.execute("INSERT INTO promo_activations (user_id, promo_code) VALUES (?, ?)", (user_id, code))
@@ -404,13 +478,17 @@ async def process_promo(message: types.Message, state: FSMContext):
     await add_history(user_id, f"Промокод {code}", bonus_amount)
     
     await message.answer(
-        f"🎉 <b>Промокод активирован!</b>\n💰 +{bonus_amount} ⭐",
+        f"🎉 <b>Успех! Промокод активирован!</b>\n\n"
+        f"💰 Тебе начислено <b>+{bonus_amount} ⭐</b> на баланс.\n\n"
+        "Спасибо, что ты с нами! 💖",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👤 В Профиль", callback_data="btn_profile")]]),
         parse_mode="HTML"
     )
     await state.clear()
 
+# ==========================================
 # --- ПРОФИЛЬ И РЕФЕРАЛКА ---
+# ==========================================
 @dp.callback_query(F.data == "btn_ref")
 async def ref_system(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -429,15 +507,16 @@ async def ref_system(call: CallbackQuery, state: FSMContext):
                 user_info = await bot.get_chat(r_id)
                 ref_list_text += f"👤 {user_info.first_name}\n"
             except: ref_list_text += f"👤 ID: {r_id}\n"
-    else: ref_list_text = "Никого нет. 😢"
+    else: ref_list_text = "Пока никого нет. 😢"
 
     text = (
-        "👥 <b>Рефералка</b>\n\n"
-        "Приглашай друзей и получай <b>10%</b>!\n\n"
-        f"🔗 <code>{ref_link}</code>\n\n"
-        f"📊 Рефералов: {ref_count}\n----------------\n{ref_list_text}"
+        "👥 <b>Реферальная Система</b>\n\n"
+        "Приглашай друзей и получай <b>10%</b> от их покупок звёзд!\n\n"
+        f"🔗 <b>Твоя ссылка:</b>\n<code>{ref_link}</code>\n\n"
+        f"📊 <b>Твои рефералы:</b> {ref_count} чел.\n----------------\n{ref_list_text}\n----------------\n\n"
+        "👇 Жми кнопку ниже, чтобы поделиться ссылкой!"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔗 Поделиться", url=f"https://t.me/share/url?url={ref_link}&text=Заходи в магазин!")], [InlineKeyboardButton(text="🔙 Назад", callback_data="nav_back_main")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔗 Поделиться", url=f"https://t.me/share/url?url={ref_link}&text=Заходи в лучший магазин звёзд!")], [InlineKeyboardButton(text="🔙 Назад", callback_data="nav_back_main")]])
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
@@ -449,7 +528,7 @@ async def profile(call: CallbackQuery, state: FSMContext):
     async with aiosqlite.connect("shop.db") as db:
         async with db.execute("SELECT item, price FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 3", (call.from_user.id,)) as cursor:
             rows = await cursor.fetchall()
-            history_text = "\n".join([f"• {item} — {price} ⭐" for item, price in rows]) if rows else "Покупок нет. 😉"
+            history_text = "\n".join([f"• {item} — {price} ⭐" for item, price in rows]) if rows else "Покупок пока нет. 😉"
             
     bonus_available = True
     if last_bonus:
@@ -457,14 +536,20 @@ async def profile(call: CallbackQuery, state: FSMContext):
         if datetime.now() - last_dt < timedelta(days=1): bonus_available = False
 
     kb_builder = InlineKeyboardBuilder()
-    kb_builder.button(text="💳 Пополнить", callback_data="btn_topup")
-    kb_builder.button(text="🎟 Промокод", callback_data="btn_promo")
-    if bonus_available: kb_builder.button(text="🎁 Бонус (+1 ⭐)", callback_data="btn_claim_bonus")
-    else: kb_builder.button(text="⏳ Бонус получен", callback_data="btn_bonus_wait")
+    kb_builder.button(text="💳 Пополнить Баланс", callback_data="btn_topup")
+    kb_builder.button(text="🎟 Ввести Промокод", callback_data="btn_promo")
+    if bonus_available: kb_builder.button(text="🎁 Забрать Бонус (+1 ⭐)", callback_data="btn_claim_bonus")
+    else: kb_builder.button(text="⏳ Бонус Уже Получен", callback_data="btn_bonus_wait")
     kb_builder.button(text="🔙 Назад", callback_data="nav_back_main")
     kb_builder.adjust(1)
     
-    text = f"👤 <b>Профиль</b>\n\n🆔 <code>{call.from_user.id}</code>\n💰 Баланс: <b>{balance} ⭐</b>\n\n📜 <b>История:</b>\n{history_text}"
+    text = (
+        f"👤 <b>Твой Профиль</b>\n\n"
+        f"🆔 ID: <code>{call.from_user.id}</code>\n"
+        f"💰 Баланс звёзд: <b>{balance} ⭐</b>\n\n"
+        f"📜 <b>История покупок:</b>\n{history_text}\n\n"
+        f"<i>Баланс нужен для покупки юзернеймов и игр!</i> 💖"
+    )
     await send_menu_with_photo(call.message.chat.id, text, kb_builder.as_markup(), call.message.message_id)
     await call.answer()
 
@@ -473,19 +558,21 @@ async def claim_bonus(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     balance, last_bonus, _, _ = await get_user(user_id)
     if last_bonus and datetime.now() - datetime.fromisoformat(last_bonus) < timedelta(days=1):
-        return await call.answer("❌ Уже получен сегодня.", show_alert=True)
+        return await call.answer("❌ Ошибка! Бонус уже получен сегодня. Приходи завтра!", show_alert=True)
     async with aiosqlite.connect("shop.db") as db:
         await db.execute("UPDATE users SET balance = balance + 1, last_bonus = ? WHERE user_id = ?", (datetime.now().isoformat(), user_id))
         await db.commit()
     await add_history(user_id, "Бонус", 1)
-    await call.answer("🎉 +1 звезда!", show_alert=True)
+    await call.answer("🎉 Успех! Ты получил 1 звезду!", show_alert=True)
     await profile(call, state)
 
 @dp.callback_query(F.data == "btn_bonus_wait")
 async def bonus_wait(call: CallbackQuery):
-    await call.answer("❌ Жди 24 часа.", show_alert=True)
+    await call.answer("❌ Ошибка! Бонус можно брать раз в 24 часа.", show_alert=True)
 
+# ==========================================
 # --- МАГАЗИН (ЗВЕЗДЫ И НИКИ) ---
+# ==========================================
 @dp.callback_query(F.data == "btn_buy_stars")
 async def buy_stars(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -493,36 +580,55 @@ async def buy_stars(call: CallbackQuery, state: FSMContext):
     kb.button(text="🌟 15 Звёзд — 30₽", callback_data="pay_select_15")
     kb.button(text="🔙 Назад", callback_data="nav_back_main")
     kb.adjust(1)
-    text = "🛒 <b>Пакет звёзд:</b>\n\nВыбери способ оплаты."
+    text = (
+        "🛒 <b>Пакет звёзд:</b>\n\n"
+        "🌟 Выбери удобный способ оплаты. Все операции моментальные!"
+    )
     await send_menu_with_photo(call.message.chat.id, text, kb.as_markup(), call.message.message_id)
     await call.answer()
 
 @dp.callback_query(F.data == "pay_select_15")
 async def choose_pay(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🇷🇺 Рублями (30₽)", callback_data="pay_rub_15")], [InlineKeyboardButton(text="🪙 Криптой (33₽)", callback_data="pay_crypto_15")], [InlineKeyboardButton(text="❌ Отмена", callback_data="nav_back_main")]])
-    text = "💳 <b>Способ оплаты:</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🇷🇺 Оплатить Рублями (30₽)", callback_data="pay_rub_15")], [InlineKeyboardButton(text="🪙 Оплатить Криптой (33₽)", callback_data="pay_crypto_15")], [InlineKeyboardButton(text="❌ Отмена", callback_data="nav_back_main")]])
+    text = "💳 <b>Как вы хотите оплатить 15 звёзд?</b>"
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
 @dp.callback_query(F.data == "pay_rub_15")
 async def pay_rub(call: CallbackQuery):
     user_id = call.from_user.id
+    username = call.from_user.username or "нет_юзернейма"
     code = generate_code()
+    price_rub = 30
+    
+    # Реферальный бонус
     _, _, referrer_id, _ = await get_user(user_id)
     if referrer_id:
         await add_balance(referrer_id, 1)
-        try: await bot.send_message(referrer_id, "🎉 Твой друг купил звёзды! +1 ⭐", parse_mode="HTML")
+        try: await bot.send_message(referrer_id, "🎉 Твой друг совершил покупку! Тебе начислено +1 ⭐", parse_mode="HTML")
         except: pass
 
     async with aiosqlite.connect("shop.db") as db:
-        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, "user", "15 звёзд (Рубли)", code, "pending"))
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, "15 звёзд (Рубли)", code, "pending"))
         order_id = cursor.lastrowid
         await db.commit()
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]])
-    text = f"✅ <b>Заказ #{order_id}</b>\n💰 К оплате: 30₽\n🔑 Код: <code>{code}</code>\n\nНапиши менеджеру."
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Написать Менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]])
+    text = (
+        f"✅ <b>Успех! Заказ #{order_id} создан!</b>\n\n"
+        f"📦 Товар: 15 звёзд\n"
+        f"💰 К оплате: <b>{price_rub}₽</b>\n"
+        f"🔑 Код заказа: <code>{code}</code>\n\n"
+        f"👇 Напиши менеджеру и отправь этот код:\n"
+        f"<b>@{ADMIN_USERNAME}</b>"
+    )
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
+    
+    # УВЕДОМЛЕНИЕ АДМИНУ
+    if ADMIN_ID != 0:
+        kb_admin = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"), InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]])
+        await bot.send_message(ADMIN_ID, f"🔔 <b>НОВЫЙ ЗАКАЗ (РУБЛИ) #{order_id}</b>\n\n👤 Клиент: @{username}\n🆔 ID: <code>{user_id}</code>\n📦 Товар: 15 звёзд\n💰 К оплате: {price_rub}₽\n🔑 Код: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
 @dp.callback_query(F.data == "pay_crypto_15")
@@ -554,7 +660,7 @@ async def show_unames(call: CallbackQuery, state: FSMContext):
         kb.button(text=f"👑 {uname} — {price} ⭐", callback_data=f"uname_sel_{uname}")
     kb.button(text="🔙 Назад", callback_data="nav_back_main")
     kb.adjust(1)
-    await send_menu_with_photo(call.message.chat.id, "👑 <b>Юзернеймы</b>\n\nВыбери ник.", kb.as_markup(), call.message.message_id)
+    await send_menu_with_photo(call.message.chat.id, "👑 <b>Эксклюзивные Юзернеймы</b>\n\nВыбери ник.", kb.as_markup(), call.message.message_id)
     await call.answer()
 
 @dp.callback_query(F.data.startswith("uname_sel_"))
@@ -570,6 +676,7 @@ async def buy_uname(call: CallbackQuery):
     uname = call.data.replace("uname_buy_", "")
     price = USERNAMES_DB[uname]
     user_id = call.from_user.id
+    username = call.from_user.username or "нет_юзернейма"
     code = generate_code()
     
     balance, _, _, _ = await get_user(user_id)
@@ -580,20 +687,33 @@ async def buy_uname(call: CallbackQuery):
     await add_history(user_id, f"Ник {uname}", price)
     
     async with aiosqlite.connect("shop.db") as db:
-        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, "user", uname, code, "pending"))
+        cursor = await db.execute("INSERT INTO orders (user_id, username, item, code, status) VALUES (?, ?, ?, ?, ?)", (user_id, username, uname, code, "pending"))
         order_id = cursor.lastrowid
         await db.commit()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Менеджеру", url=f"https://t.me/{ADMIN_USERNAME}")]])
-    await send_menu_with_photo(call.message.chat.id, f"✅ <b>Заказ #{order_id}</b>\n👑 {uname}\n🔑 Код: <code>{code}</code>", kb, call.message.message_id)
+    await send_menu_with_photo(call.message.chat.id, f"✅ <b>Заказ #{order_id} создан!</b>\n📦 {uname}\n🔑 Код: <code>{code}</code>", kb, call.message.message_id)
+    
+    if ADMIN_ID != 0:
+        kb_admin = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Выполнил", callback_data=f"adm_done_{order_id}"), InlineKeyboardButton(text="❌ Не выполнил", callback_data=f"adm_reject_{order_id}")]])
+        await bot.send_message(ADMIN_ID, f"🔔 <b>ЗАКАЗ ЮЗЕРНЕЙМА #{order_id}</b>\nКлиент: @{username}\nТовар: {uname}\nКод: <code>{code}</code>", reply_markup=kb_admin, parse_mode="HTML")
     await call.answer()
 
+# ==========================================
 # --- НАВИГАЦИЯ И ПОМОЩЬ ---
+# ==========================================
 @dp.callback_query(F.data == "btn_help")
 async def help_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    text = "📖 <b>Помощь</b>\n\n🌟 Покупка: Рубли/Крипта.\n👑 Ники: За звезды.\n👥 Рефералка: 10%.\n🎮 Игры: Краш и Монетка."
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Админ", url=f"https://t.me/{ADMIN_USERNAME}")], [InlineKeyboardButton(text="🔙 Назад", callback_data="nav_back_main")]])
+    text = (
+        "📖 <b>Центр Помощи Starsshop</b>\n\n"
+        "🌟 <b>Покупка Звёзд:</b> Выбираешь пакет, оплачиваешь рублями или криптой. Звезды моментально падают на баланс.\n\n"
+        "👑 <b>Покупка Юзернеймов:</b> Нужны звезды на балансе. Покупаешь ник, получаешь код, пишешь менеджеру.\n\n"
+        "👥 <b>Реферальная Система:</b> Приглашай друзей и получай 10% с их покупок!\n\n"
+        "🎮 <b>Мини-Игры:</b> Краш и Монетка. Испытай удачу!\n\n"
+        f"💬 <b>Менеджер:</b> @{ADMIN_USERNAME}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👨‍💻 Написать Админу", url=f"https://t.me/{ADMIN_USERNAME}")], [InlineKeyboardButton(text="🔙 Назад", callback_data="nav_back_main")]])
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
@@ -608,7 +728,9 @@ async def back_games(call: CallbackQuery, state: FSMContext):
     await state.clear() 
     await show_games(call, state)
 
+# ==========================================
 # --- АДМИНКА (Скрытая) ---
+# ==========================================
 @dp.callback_query(F.data.startswith("adm_done_"))
 async def admin_done(call: CallbackQuery):
     if call.from_user.username != ADMIN_USERNAME: return await call.answer("Нет прав", show_alert=True)
@@ -636,7 +758,7 @@ async def main():
     await init_db()
     await set_commands()
     threading.Thread(target=run_flask, daemon=True).start()
-    print(f"[*] Starsshop запущен. Игры активны.")
+    print(f"[*] Starsshop запущен. Ожидание действий.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

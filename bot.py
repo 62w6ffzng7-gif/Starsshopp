@@ -1,5 +1,5 @@
 # language: Python, file: bot.py, target: Python 3.10+
-# *Магазин Starsshop: Финальная версия (Исправлен Краш и Монетка)*
+# *Магазин Starsshop: ФИНАЛЬНЫЙ КОД. Все режимы рабочие.*
 
 import asyncio
 import logging
@@ -29,14 +29,23 @@ CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "314128:AA3GvM6yWgMQqrM8y1hwjf2
 CRYPTO_API_URL = "https://pay.crypt.bot/api"
 BOT_USERNAME = "Starsshop337_bot"
 
+# Товары и промокоды
 USERNAMES_DB = {"@ynqnw5": 25}
-PROMOCODES = {"STARTOP2026": 15, "NEWYEAR2026": 25, "WELCOME": 5, "CRYPTOFAN": 20, "STARSSHOP": 25, "FREESTARS": 10}
+PROMOCODES = {
+    "STARTOP2026": 15,
+    "NEWYEAR2026": 25,
+    "WELCOME": 5,
+    "CRYPTOFAN": 20,
+    "STARSSHOP": 25,
+    "FREESTARS": 10
+}
 # ==============================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- СОСТОЯНИЯ (FSM) ---
 class UserStates(StatesGroup):
     waiting_for_topup_amount = State()
     waiting_for_promo = State()
@@ -45,25 +54,36 @@ class UserStates(StatesGroup):
     waiting_for_bet_coin = State()
     waiting_for_coin_choice = State()
 
+# --- FLASK ДЛЯ ХОСТИНГА ---
 app = Flask(__name__)
 @app.route('/')
 def health(): return "Starsshop is running ✨", 200
 def run_flask(): app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
+# Хранилище активных игр Краш
 active_crash_messages = set()
 
-# --- БД ---
+# --- ИНИЦИАЛИЗАЦИЯ БД ---
 async def init_db():
     async with aiosqlite.connect("shop.db") as db:
         await db.execute("""CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0, last_bonus TIMESTAMP,
             referrer_id INTEGER, win_streak INTEGER DEFAULT 0
         )""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, item TEXT, price INTEGER, date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, item TEXT, code TEXT, status TEXT)""")
-        await db.execute("""CREATE TABLE IF NOT EXISTS promo_activations (user_id INTEGER, promo_code TEXT, PRIMARY KEY (user_id, promo_code))""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, item TEXT, price INTEGER, 
+            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, 
+            item TEXT, code TEXT, status TEXT
+        )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS promo_activations (
+            user_id INTEGER, promo_code TEXT, PRIMARY KEY (user_id, promo_code)
+        )""")
         await db.commit()
 
+# --- ФУНКЦИИ БД ---
 async def get_user(user_id):
     async with aiosqlite.connect("shop.db") as db:
         async with db.execute("SELECT balance, last_bonus, referrer_id, win_streak FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -90,8 +110,10 @@ async def add_history(user_id, item, price):
         await db.execute("INSERT INTO history (user_id, item, price) VALUES (?, ?, ?)", (user_id, item, price))
         await db.commit()
 
-def generate_code(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+def generate_code(): 
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
+# --- УТИЛИТЫ ОТПРАВКИ ---
 async def send_menu_with_photo(chat_id, text, keyboard, message_id=None):
     try:
         if message_id:
@@ -114,8 +136,10 @@ def get_main_menu_kb():
     kb.adjust(1)
     return kb.as_markup()
 
-async def set_commands(): await bot.set_my_commands([BotCommand(command="start", description="Открыть магазин")])
+async def set_commands(): 
+    await bot.set_my_commands([BotCommand(command="start", description="Открыть магазин")])
 
+# --- CRYPTOBOT ---
 async def create_crypto_invoice(amount_usdt: float, description: str, payload: str):
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
     data = {"asset": "USDT", "amount": str(amount_usdt), "description": description, "payload": payload}
@@ -134,15 +158,35 @@ async def check_crypto_invoice(invoice_id: int):
                 return result["result"]["items"][0]["status"] == "paid"
     return False
 
+# ==========================================
+# --- ГЛАВНЫЕ ХЭНДЛЕРЫ ---
+# ==========================================
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    await get_user(message.from_user.id)
+    user_id = message.from_user.id
+    args = message.text.split()
+    
+    # Рефералка
+    if len(args) > 1 and args[1].startswith("ref_"):
+        try:
+            referrer_id = int(args[1].replace("ref_", ""))
+            if referrer_id != user_id:
+                async with aiosqlite.connect("shop.db") as db:
+                    async with db.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
+                        row = await cursor.fetchone()
+                        if not row or row[0] is None:
+                            await db.execute("UPDATE users SET referrer_id = ? WHERE user_id = ?", (referrer_id, user_id))
+                            await db.commit()
+                            await bot.send_message(referrer_id, f"🎉 <b>У тебя новый реферал!</b>\n👤 {message.from_user.first_name}\n💎 Как только он купит звёзды, ты получишь 10%!", parse_mode="HTML")
+        except: pass
+
+    await get_user(user_id)
     caption = "👋 <b>Добро пожаловать в Starsshop!</b> 🌟\n\n💎 Здесь ты можешь купить звёзды или юзернеймы.\n🚀 Быстро, выгодно и безопасно!"
     await send_menu_with_photo(message.chat.id, caption, get_main_menu_kb())
 
 # ==========================================
-# --- ИГРЫ ---
+# --- МИНИ-ИГРЫ ---
 # ==========================================
 @dp.callback_query(F.data == "btn_games")
 async def show_games(call: CallbackQuery, state: FSMContext):
@@ -162,10 +206,9 @@ async def show_games(call: CallbackQuery, state: FSMContext):
     await send_menu_with_photo(call.message.chat.id, text, kb, call.message.message_id)
     await call.answer()
 
-# --- ИГРА 1: КРАШ (ИСПРАВЛЕН) ---
+# --- КРАШ ---
 @dp.callback_query(F.data == "game_crash_start")
 async def crash_start(call: CallbackQuery, state: FSMContext):
-    # Устанавливаем именно состояние КРАША
     await state.set_state(UserStates.waiting_for_bet_crash)
     text = "🚀 <b>Краш</b>\n\nВведи сумму ставки (от 5 до 50):"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="nav_games")]])
@@ -224,10 +267,9 @@ async def crash_take(call: CallbackQuery):
     except: pass
     await call.answer("💸 Зачислено!")
 
-# --- ИГРА 2: МОНЕТКА (ИСПРАВЛЕНА) ---
+# --- МОНЕТКА ---
 @dp.callback_query(F.data == "game_coin_start")
 async def coin_start(call: CallbackQuery, state: FSMContext):
-    # Устанавливаем именно состояние МОНЕТКИ
     await state.set_state(UserStates.waiting_for_bet_coin)
     text = "🪙 <b>Монетка</b>\n\nВведи сумму ставки (от 10 до 100):"
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="nav_games")]])
@@ -274,6 +316,7 @@ async def coin_play(message: types.Message, state: FSMContext):
     await msg.edit_text("🪙 <b>Монетка крутится...</b> ⏳", parse_mode="HTML")
     await asyncio.sleep(2)
     
+    # Подкрутка (2 победы подряд = проигрыш)
     if win_streak >= 2:
         win = False
         await update_win_streak(user_id, 0)
@@ -300,7 +343,7 @@ async def coin_play(message: types.Message, state: FSMContext):
     await msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
 # ==========================================
-# --- ПОПОЛНЕНИЕ ---
+# --- ПОПОЛНЕНИЕ БАЛАНСА ---
 # ==========================================
 @dp.callback_query(F.data == "btn_topup")
 async def topup_start(call: CallbackQuery, state: FSMContext):
